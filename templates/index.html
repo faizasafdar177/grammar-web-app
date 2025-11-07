@@ -54,15 +54,36 @@
             font-size: 13px;
             color: #666;
         }
+        .or-divider {
+            margin: 15px 0;
+            font-weight: 500;
+            color: #666;
+        }
+        textarea {
+            width: 100%;
+            border-radius: 10px;
+            padding: 10px;
+            border: 2px dashed #8f94fb;
+            resize: vertical;
+            background-color: #f7f8ff;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h2>✨ AI Grammar Checker</h2>
-        <p>Upload your <strong>.docx</strong> file and get instant grammar corrections with highlighted changes.</p>
+        <p>Upload your <strong>.docx</strong> file or type text below to get instant grammar corrections.</p>
 
-        <form action="/upload" method="post" enctype="multipart/form-data" class="mt-4">
-            <input type="file" name="file" accept=".docx" required class="form-control mb-3">
+        <!-- ✅ FIXED: action="/" instead of /upload -->
+        <form action="/" method="post" enctype="multipart/form-data" class="mt-4">
+            <!-- Text input -->
+            <textarea name="text" rows="5" placeholder="Type or paste your text here..."></textarea>
+
+            <div class="or-divider">OR</div>
+
+            <!-- File upload -->
+            <input type="file" name="file" accept=".docx" class="form-control mb-3">
+
             <button type="submit" class="btn btn-primary">Check Grammar</button>
         </form>
 
