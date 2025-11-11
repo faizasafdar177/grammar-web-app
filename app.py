@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, send_file, url_for
+from flask import Flask, render_template, request, send_file, url_for, jsonify
 from docx import Document
 from docx.shared import RGBColor
 import requests
@@ -9,12 +9,12 @@ import json
 
 app = Flask(__name__)
 
+# Public LanguageTool API
 LT_API_URL = "https://api.languagetool.org/v2/check"
 
 # -----------------------------
 # Dictionary helpers (FREE)
 # -----------------------------
-
 def get_law_meaning(word):
     """Check local Black's Law Dictionary JSON"""
     try:
@@ -48,6 +48,7 @@ def get_word_meaning(word):
     if general:
         return f"{general} (Free Dictionary API)"
     return "(No meaning found)"
+
 
 # -----------------------------
 # Helper: detect reference-like lines
@@ -193,7 +194,7 @@ def process_text_line_by_line(text: str):
 
 
 # -----------------------------
-# Routes
+# Routes for Web App
 # -----------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -238,5 +239,27 @@ def download_file(filename):
     return send_file(file_path, as_attachment=True)
 
 
+# -----------------------------
+# 🔹 New API route for Word Add-in
+# -----------------------------
+@app.route("/api/grammar_check", methods=["POST"])
+def api_grammar_check():
+    """API endpoint for Word Add-in grammar checking"""
+    text = request.json.get("text", "")
+    if not text.strip():
+        return jsonify({"error": "No text provided"}), 400
+
+    try:
+        data = {"text": text, "language": "en-US"}
+        resp = requests.post(LT_API_URL, data=data, timeout=10)
+        resp.raise_for_status()
+        return jsonify(resp.json())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# -----------------------------
+# Main
+# -----------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
