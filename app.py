@@ -13,41 +13,22 @@ app = Flask(__name__)
 LT_API_URL = "https://api.languagetool.org/v2/check"
 
 # -----------------------------
-# Dictionary helpers (FREE)
+# ✅ Dictionary helper (ONLY Black's Law Dictionary)
 # -----------------------------
-def get_law_meaning(word):
-    """Check local Black's Law Dictionary JSON"""
+def get_word_meaning(word):
+    """Return meaning only from local Black's Law Dictionary JSON"""
+    if not word:
+        return "(No meaning)"
     try:
         with open("blacklaw_terms.json", "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data.get(word.lower(), None)
-    except:
-        return None
-
-
-def get_general_meaning(word):
-    """Free public dictionary API (dictionaryapi.dev)"""
-    try:
-        resp = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}", timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            return data[0]["meanings"][0]["definitions"][0]["definition"]
-    except:
-        pass
-    return None
-
-
-def get_word_meaning(word):
-    """Combine both dictionaries"""
-    if not word:
-        return "(No meaning)"
-    law = get_law_meaning(word)
-    if law:
-        return f"{law} (Black's Law Dictionary)"
-    general = get_general_meaning(word)
-    if general:
-        return f"{general} (Free Dictionary API)"
-    return "(No meaning found)"
+        meaning = data.get(word.lower())
+        if meaning:
+            return f"{meaning} (Black's Law Dictionary)"
+        else:
+            return "(No meaning found in Black's Law Dictionary)"
+    except Exception as e:
+        return f"(Error reading dictionary: {str(e)})"
 
 
 # -----------------------------
@@ -240,7 +221,7 @@ def download_file(filename):
 
 
 # -----------------------------
-# 🔹 New API route for Word Add-in
+# 🔹 API route for Word Add-in
 # -----------------------------
 @app.route("/api/grammar_check", methods=["POST"])
 def api_grammar_check():
