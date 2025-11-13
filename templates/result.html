@@ -23,14 +23,12 @@
       padding: 35px;
       width: 95%;
       max-width: 950px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
     }
     .text-area {
-      border: 1px solid #ccc;
-      padding: 18px;
+      border: 1px solid #ddd;
+      padding: 20px;
       border-radius: 10px;
-      background: #fafafa;
-      min-height: 150px;
     }
     .grammar-wrong, .legal-correct {
       border-bottom: 3px solid purple;
@@ -38,42 +36,23 @@
       cursor: pointer;
       padding: 2px 3px;
     }
-
-    /* POPUP BOX */
     .popup-box {
       position: fixed;
-      top: 30%;
+      top: 25%;
       left: 50%;
       transform: translate(-50%, -50%);
       background: white;
-      padding: 25px;
-      border-radius: 12px;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 5px 20px rgba(0,0,0,0.3);
       width: 420px;
-      max-width: 95%;
-      box-shadow: 0 8px 30px rgba(0,0,0,0.35);
       display: none;
       z-index: 9999;
     }
     .label-title {
       font-weight: bold;
       color: #4e54c8;
-      font-size: 22px;
     }
-
-    .suggest-btn {
-      background: #eee;
-      padding: 6px 10px;
-      border-radius: 6px;
-      cursor: pointer;
-      margin-bottom: 5px;
-      display: inline-block;
-      font-weight: 600;
-    }
-
-    .suggest-btn:hover {
-      background: #dcdcdc;
-    }
-
   </style>
 </head>
 
@@ -82,38 +61,38 @@
 
     <h1>✨ Grammar Check Result</h1>
 
-    <button class="btn btn-primary" onclick="downloadFinalDoc()">
-      ⬇️ Download Corrected File (.docx)
-    </button>
+    {% if download_link %}
+      <a href="{{ download_link }}" class="btn btn-primary" onclick="prepareForDownload()" download>
+        ⬇️ Download Corrected File (.docx)
+      </a>
+    {% endif %}
 
     <!-- MAIN TEXT -->
     <div id="textContainer" class="text-area">
       {{ highlighted_html|safe }}
     </div>
 
-    <!-- FORM TO SEND FINAL TEXT -->
-    <form id="downloadForm" action="/download_corrected" method="POST">
-      <input type="hidden" name="final_text" id="finalTextField">
-      <input type="hidden" name="replacements" id="finalReplacementsField">
+    <!-- Hidden form to send accepted replacements + final text -->
+    <form id="saveForm" action="/" method="post">
+      <input type="hidden" name="text" id="finalTextInput">
+      <input type="hidden" name="replacements" id="replacementsInput">
     </form>
 
-    <!-- POPUP -->
+    <!-- POPUP BOX -->
     <div id="popup" class="popup-box">
       <h4 class="label-title">Correction Suggestion</h4>
 
       <p><b>Wrong Word:</b> <span id="popupWrong"></span></p>
 
-      <div>
-        <b>Black’s Law Suggestion:</b>  
-        <div id="popupBlack" class="suggest-btn">—</div>
-      </div>
+      <p><b>Black's Law Suggestion:</b>
+        <span id="popupBlack" style="color:green;"></span>
+      </p>
 
-      <div>
-        <b>General Suggestion:</b>
-        <div id="popupGeneral" class="suggest-btn">—</div>
-      </div>
+      <p><b>General Suggestion:</b>
+        <span id="popupGeneral" style="color:#444;"></span>
+      </p>
 
-      <button class="btn btn-success mt-2" onclick="applyFix()">Apply Fix</button>
+      <button class="btn btn-success" onclick="applyFix()">Apply Fix</button>
       <button class="btn btn-warning" onclick="ignoreFix()">Ignore</button>
       <button class="btn btn-secondary" onclick="closePopup()">Cancel</button>
     </div>
@@ -128,23 +107,21 @@
     let finalSuggestion = "";
     let replacements = [];
 
-    // CLICK EVENT
+    // CLICK HANDLER
     document.addEventListener('click', function (e) {
-
       if (e.target.classList.contains('grammar-wrong') ||
           e.target.classList.contains('legal-correct')) {
 
         selectedElement = e.target;
-        selectedWrong = e.target.dataset.wrong;
-        blackSuggestion = e.target.dataset.black || "";
-        generalSuggestion = e.target.dataset.general || "";
-
-        document.getElementById("popupWrong").innerText = selectedWrong;
-
-        document.getElementById("popupBlack").innerText = blackSuggestion || "—";
-        document.getElementById("popupGeneral").innerText = generalSuggestion || "—";
+        selectedWrong   = e.target.dataset.wrong;
+        blackSuggestion = e.target.dataset.blackSuggestion || "";
+        generalSuggestion = e.target.dataset.generalSuggestion || "";
 
         finalSuggestion = blackSuggestion || generalSuggestion;
+
+        document.getElementById("popupWrong").innerText = selectedWrong;
+        document.getElementById("popupBlack").innerText = blackSuggestion || "—";
+        document.getElementById("popupGeneral").innerText = generalSuggestion || "—";
 
         document.getElementById('popup').style.display = "block";
       }
@@ -169,7 +146,7 @@
       closePopup();
     }
 
-    // IGNORE
+    // IGNORE FIX
     function ignoreFix() {
       if (!selectedElement) return;
 
@@ -177,14 +154,15 @@
       closePopup();
     }
 
-    // DOWNLOAD DOCX
-    function downloadFinalDoc() {
-      const finalText = document.getElementById("textContainer").innerText.trim();
+    // SAVE before downloading DOCX
+    function prepareForDownload() {
+      const container = document.getElementById("textContainer");
+      let finalText = container.innerText.trim();
 
-      document.getElementById("finalTextField").value = finalText;
-      document.getElementById("finalReplacementsField").value = JSON.stringify(replacements);
+      document.getElementById("finalTextInput").value = finalText;
+      document.getElementById("replacementsInput").value = JSON.stringify(replacements);
 
-      document.getElementById("downloadForm").submit();
+      document.getElementById("saveForm").submit();
     }
   </script>
 
