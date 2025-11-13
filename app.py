@@ -1,178 +1,223 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Grammar Check Result</title>
+from flask import Flask, render_template, request, send_file
+from docx import Document
+import requests
+import os
+import re
+import json
+from html import escape
 
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+app = Flask(__name__)
+LT_API_URL = "https://api.languagetool.org/v2/check"
 
-  <style>
-    body {
-      font-family: 'Poppins', sans-serif;
-      background: linear-gradient(135deg, #4e54c8, #8f94fb);
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 15px;
-    }
-    .container {
-      background: #fff;
-      border-radius: 16px;
-      padding: 35px;
-      max-width: 950px;
-      width: 100%;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-    }
-    .text-area {
-      border: 1px solid #ddd;
-      padding: 20px;
-      border-radius: 10px;
-      min-height: 150px;
-      white-space: pre-wrap;
-    }
-    .grammar-wrong, .legal-correct {
-      border-bottom: 3px solid purple;
-      font-weight: bold;
-      cursor: pointer;
-      padding: 2px 3px;
-    }
-    .popup-box {
-      position: fixed;
-      top: 25%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: white;
-      padding: 20px;
-      border-radius: 10px;
-      width: 420px;
-      box-shadow: 0 5px 20px rgba(0,0,0,0.3);
-      z-index: 9999;
-      display: none;
-    }
-    .label-title {
-      font-weight: bold;
-      color: #4e54c8;
-    }
-  </style>
-</head>
+# -------------------------------------------------------------
+# Load Black’s Law Dictionary
+# -------------------------------------------------------------
+try:
+    with open("blacklaw_terms.json", "r", encoding="utf-8") as f:
+        BLACKLAW = json.load(f)
+except:
+    BLACKLAW = {}
 
-<body>
-  <div class="container">
+def normalize_key(word):
+    return re.sub(r"[^a-z]", "", word.lower().strip())
 
-    <h1>✨ Grammar Check Result</h1>
+# -------------------------------------------------------------
+# Legal Fixes
+# -------------------------------------------------------------
+LEGAL_FIX = {
+    "prima facia": "prima facie",
+    "mens reaa": "mens rea",
+    "ratio decedendi": "ratio decidendi",
+    "precedant": "precedent",
+    "jurispridence": "jurisprudence",
+    "suo moto": "suo motu",
+}
 
-    <button class="btn btn-primary mb-3" onclick="downloadFinalDoc()">
-      ⬇️ Download Corrected File (.docx)
-    </button>
+def is_reference_like(line):
+    s = line.strip()
+    return (
+        not s
+        or "http" in s
+        or "www." in s
+        or "doi" in s.lower()
+        or re.match(r"^\[\d+\]$", s)
+        or re.match(r"^\(.+\d{4}.*\)$", s)
+    )
 
-    <!-- MAIN TEXT -->
-    <div id="textContainer" class="text-area">
-      {{ highlighted_html|safe }}
-    </div>
+# -------------------------------------------------------------
+# LanguageTool API Cleaned
+# -------------------------------------------------------------
+def lt_check_sentence(text):
+    try:
+        data = {"text": text, "language": "en-US"}
+        r = requests.post(LT_API_URL, data=data, timeout=10)
+        r.raise_for_status()
+        return r.json()
+    except:
+        return {"matches": []}
 
-    <!-- Hidden form for sending corrected data -->
-    <form id="downloadForm" action="/download_corrected" method="POST">
-      <input type="hidden" name="final_text" id="finalTextField">
-      <input type="hidden" name="replacements" id="finalReplacementsField">
-    </form>
+# -------------------------------------------------------------
+# Legal Corrections
+# -------------------------------------------------------------
+def apply_legal_corrections(sentence):
+    corrected = sentence
+    hits = []
 
-    <!-- POPUP BOX -->
-    <div id="popup" class="popup-box">
-      <h4 class="label-title">Correction Suggestion</h4>
+    for wrong, correct in LEGAL_FIX.items():
+        pattern = re.compile(r"\b" + re.escape(wrong) + r"\b", re.IGNORECASE)
+        if re.search(pattern, corrected):
+            corrected = re.sub(pattern, correct, corrected)
+            meaning = BLACKLAW.get(normalize_key(correct), "(Meaning not found)")
+            hits.append((wrong, correct, meaning))
 
-      <p><b>Wrong Word:</b> <span id="popupWrong"></span></p>
-      <p><b>Black's Law Suggestion:</b> <span id="popupBlack" style="color:green;"></span></p>
-      <p><b>General Suggestion:</b> <span id="popupGeneral" style="color:#444;"></span></p>
+    return corrected, hits
 
-      <button class="btn btn-success" onclick="applyFix()">Apply Fix</button>
-      <button class="btn btn-warning" onclick="ignoreFix()">Ignore</button>
-      <button class="btn btn-secondary" onclick="closePopup()">Cancel</button>
-    </div>
+# -------------------------------------------------------------
+# Highlight Engine (HTML)
+# -------------------------------------------------------------
+def process_text_line_by_line(text):
+    lines = text.splitlines()
+    html_output = []
+    issues = []
 
-  </div>
+    for line_no, line in enumerate(lines, start=1):
 
-  <script>
-    let selectedElement = null;
-    let selectedWrong = "";
-    let blackSuggestion = "";
-    let generalSuggestion = "";
-    let finalSuggestion = "";
-    let replacements = [];
+        if is_reference_like(line):
+            html_output.append(f"<p>{line}</p>")
+            continue
 
-    // CLICK HANDLER
-    document.addEventListener("click", function (e) {
-      if (
-        e.target.classList.contains("grammar-wrong") ||
-        e.target.classList.contains("legal-correct")
-      ) {
-        selectedElement = e.target;
-        selectedWrong = e.target.dataset.wrong;
-        blackSuggestion = e.target.dataset.blackSuggestion || "";
-        generalSuggestion = e.target.dataset.generalSuggestion || "";
+        corrected, legal_hits = apply_legal_corrections(line)
+        html_line = corrected
 
-        finalSuggestion = blackSuggestion || generalSuggestion;
+        # Apply legal highlights
+        for wrong, correct, meaning in legal_hits:
+            wrong_e = escape(wrong)
+            correct_e = escape(correct)
 
-        document.getElementById("popupWrong").innerText = selectedWrong;
-        document.getElementById("popupBlack").innerText = blackSuggestion || "—";
-        document.getElementById("popupGeneral").innerText =
-          generalSuggestion || "—";
+            html_line = re.sub(
+                re.escape(wrong),
+                (
+                    f"<span class='error legal-correct' "
+                    f"data-wrong='{wrong_e}' "
+                    f"data-suggestion='{correct_e}' "
+                    f"data-black-suggestion='{correct_e}' "
+                    f"data-general-suggestion='' >{correct_e}</span>"
+                ),
+                html_line,
+                flags=re.IGNORECASE
+            )
 
-        document.getElementById("popup").style.display = "block";
-      }
-    });
+            issues.append({
+                "line": line_no,
+                "wrong": wrong,
+                "suggestion": correct,
+                "message": "Legal correction",
+                "meaning": meaning
+            })
 
-    function closePopup() {
-      document.getElementById("popup").style.display = "none";
-    }
+        # Grammar via LanguageTool
+        response = lt_check_sentence(corrected)
 
-    // APPLY FIX
-    function applyFix() {
-      if (!selectedElement || !finalSuggestion) return;
+        for m in response.get("matches", []):
+            offs, ln = m["offset"], m["length"]
+            wrong = corrected[offs:offs+ln]
 
-      selectedElement.outerHTML =
-        `<span style="background:yellow; padding:3px 5px; border-radius:4px;">${finalSuggestion}</span>`;
+            black_sug = None
+            general_sug = None
 
-      replacements.push({
-        old: selectedWrong,
-        new: finalSuggestion,
-      });
+            for rep in m["replacements"]:
+                sug = rep["value"]
+                if normalize_key(sug) in BLACKLAW and not black_sug:
+                    black_sug = sug
+                elif not general_sug:
+                    general_sug = sug
 
-      closePopup();
-    }
+            primary = black_sug or general_sug
+            if not primary:
+                continue
 
-    // IGNORE FIX
-    function ignoreFix() {
-      if (!selectedElement) return;
+            wrong_e = escape(wrong)
+            primary_e = escape(primary)
+            black_e = escape(black_sug) if black_sug else ""
+            general_e = escape(general_sug) if general_sug else ""
 
-      selectedElement.outerHTML = `<span>${selectedWrong}</span>`;
-      closePopup();
-    }
+            html_line = html_line.replace(
+                wrong,
+                (
+                    f"<span class='error grammar-wrong' "
+                    f"data-wrong='{wrong_e}' "
+                    f"data-suggestion='{primary_e}' "
+                    f"data-black-suggestion='{black_e}' "
+                    f"data-general-suggestion='{general_e}' >{wrong_e}</span>"
+                )
+            )
 
-    // CLEAN TEXT (remove all spans + keep new lines)
-    function extractCleanText() {
-      const container = document.getElementById("textContainer");
-      let txt = container.innerText;
+            meaning = BLACKLAW.get(normalize_key(primary), "(No meaning found)")
 
-      txt = txt.replace(/\s+\n/g, "\n");
-      txt = txt.replace(/\n\s+/g, "\n");
+            issues.append({
+                "line": line_no,
+                "wrong": wrong,
+                "suggestion": primary,
+                "message": m["message"],
+                "meaning": meaning
+            })
 
-      return txt.trim();
-    }
+        html_output.append(f"<p>{html_line}</p>")
 
-    // DOWNLOAD FINAL DOCX
-    function downloadFinalDoc() {
-      const finalText = extractCleanText();
+    return "\n".join(html_output), issues
 
-      document.getElementById("finalTextField").value = finalText;
-      document.getElementById("finalReplacementsField").value =
-        JSON.stringify(replacements);
+# -------------------------------------------------------------
+# APPLY FIXES TO DOCX
+# -------------------------------------------------------------
+def apply_replacements_to_doc(doc, replacements):
+    for para in doc.paragraphs:
+        for r in replacements:
+            wrong = r["old"]
+            new = r["new"]
+            para.text = re.sub(rf"\b{re.escape(wrong)}\b", new, para.text, flags=re.IGNORECASE)
+    return doc
 
-      document.getElementById("downloadForm").submit();
-    }
-  </script>
+# -------------------------------------------------------------
+# ROUTES
+# -------------------------------------------------------------
 
-</body>
-</html>
+@app.route("/", methods=["GET", "POST"])
+def index():
+    if request.method == "POST":
+
+        text = request.form.get("text", "").strip()
+        file = request.files.get("file")
+
+        if file and file.filename.endswith(".docx"):
+            doc = Document(file)
+            text = "\n".join(p.text for p in doc.paragraphs)
+        else:
+            doc = Document()
+            doc.add_paragraph(text)
+
+        highlighted, issues = process_text_line_by_line(text)
+
+        return render_template("result.html",
+                               highlighted_html=highlighted,
+                               issues=issues)
+
+    return render_template("index.html")
+
+
+@app.route("/download_corrected", methods=["POST"])
+def download_corrected():
+    final_text = request.form.get("final_text", "")
+    replacements = json.loads(request.form.get("replacements", "[]"))
+
+    doc = Document()
+    for line in final_text.split("\n"):
+        doc.add_paragraph(line)
+
+    output_path = "static/corrected_output.docx"
+    doc.save(output_path)
+
+    return send_file(output_path, as_attachment=True)
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
