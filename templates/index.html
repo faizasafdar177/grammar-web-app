@@ -113,11 +113,18 @@
             <!-- DOCX UPLOAD -->
             <input type="file" name="file" accept=".docx" class="mb-3">
 
+            <!-- Hidden input for replacements (needed for backend processing on Render) -->
+            <input type="hidden" name="replacements" id="replacementsInput" value="[]">
+
             <button type="submit" class="btn btn-primary">Check Grammar</button>
         </form>
 
         <footer>Powered by LanguageTool + Flask | © 2025</footer>
     </div>
 
+    <script>
+        // This ensures GitHub/Render backend receives replacements even if empty
+        document.getElementById("replacementsInput").value = "[]";
+    </script>
 </body>
 </html>
