@@ -17,77 +17,107 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 15px;
         }
+
         .container {
-            background-color: white;
+            background-color: #ffffff;
             border-radius: 20px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-            padding: 40px;
-            width: 90%;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+            padding: 40px 32px;
+            width: 100%;
             max-width: 500px;
+            animation: fadeIn 0.5s ease-in-out;
             text-align: center;
         }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
         h2 {
             color: #4e54c8;
             font-weight: 600;
-            margin-bottom: 30px;
+            font-size: 28px;
+            margin-bottom: 18px;
         }
-        .btn-primary {
-            background-color: #4e54c8;
-            border: none;
-            font-weight: 600;
-            border-radius: 10px;
-            padding: 10px 30px;
+
+        p {
+            color: #555;
+            font-size: 15px;
         }
-        .btn-primary:hover {
-            background-color: #5d63e2;
-        }
-        .form-control {
-            border: 2px dashed #8f94fb;
-            border-radius: 10px;
-            padding: 12px;
-            cursor: pointer;
-            background-color: #f7f8ff;
-        }
-        footer {
-            margin-top: 25px;
-            font-size: 13px;
-            color: #666;
-        }
-        .or-divider {
-            margin: 15px 0;
-            font-weight: 500;
-            color: #666;
-        }
+
         textarea {
             width: 100%;
             border-radius: 10px;
-            padding: 10px;
+            padding: 12px;
             border: 2px dashed #8f94fb;
             resize: vertical;
             background-color: #f7f8ff;
+            font-size: 14px;
+        }
+
+        input[type="file"] {
+            border: 2px dashed #8f94fb;
+            border-radius: 10px;
+            padding: 12px;
+            background-color: #f7f8ff;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4e54c8, #8f94fb);
+            border: none;
+            border-radius: 10px;
+            padding: 12px 28px;
+            font-weight: 600;
+            font-size: 16px;
+            width: 100%;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #5d63e2, #9da2ff);
+        }
+
+        .or-divider {
+            margin: 18px 0;
+            font-weight: 600;
+            color: #666;
+            font-size: 14px;
+            letter-spacing: 1px;
+        }
+
+        footer {
+            margin-top: 25px;
+            font-size: 12px;
+            color: #777;
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <h2>✨ AI Grammar Checker</h2>
-        <p>Upload your <strong>.docx</strong> file or type text below to get instant grammar corrections.</p>
+        <p>Upload a <strong>.docx</strong> file or type text below for instant grammar correction.</p>
 
-        <!-- ✅ FIXED: action="/" instead of /upload -->
+        <!-- MAIN FORM -->
         <form action="/" method="post" enctype="multipart/form-data" class="mt-4">
-            <!-- Text input -->
+
+            <!-- TEXT INPUT -->
             <textarea name="text" rows="5" placeholder="Type or paste your text here..."></textarea>
 
             <div class="or-divider">OR</div>
 
-            <!-- File upload -->
-            <input type="file" name="file" accept=".docx" class="form-control mb-3">
+            <!-- DOCX UPLOAD -->
+            <input type="file" name="file" accept=".docx" class="mb-3">
 
             <button type="submit" class="btn btn-primary">Check Grammar</button>
         </form>
 
         <footer>Powered by LanguageTool + Flask | © 2025</footer>
     </div>
+
 </body>
 </html>
