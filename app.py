@@ -12,20 +12,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # -------------------------------------------------------
-#           2) Groq client init
+#           2) Groq client init (FINAL FIXED VERSION)
 # -------------------------------------------------------
 from groq import Groq
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+groq_client = None
 try:
-    groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
-    if groq_client:
+    if GROQ_API_KEY and GROQ_API_KEY.strip():
+        groq_client = Groq(api_key=GROQ_API_KEY)
         print("✅ Groq Loaded Successfully")
     else:
         print("⚠️ GROQ_API_KEY missing or empty")
 except Exception as e:
-    print("❌ Groq Error:", e)
+    print("❌ Groq Init Error:", e)
     groq_client = None
+
 
 # -------------------------------------------------------
 #           3) Flask app + LanguageTool URL
@@ -35,7 +38,7 @@ app = Flask(__name__)
 LT_API_URL = "https://api.languagetool.org/v2/check"
 
 # -------------------------------------------------------
-#      4) Load Black’s Law Dictionary JSON (local)
+#      4) Load Black’s Law Dictionary JSON
 # -------------------------------------------------------
 try:
     with open("blacklaw_terms.json", "r", encoding="utf-8") as f:
@@ -47,7 +50,7 @@ def normalize_key(word: str) -> str:
     return re.sub(r"[^a-z\s]", "", word.lower().strip())
 
 # -------------------------------------------------------
-#      5) Legal fix rules (wrong → correct)
+#      5) Legal fix rules
 # -------------------------------------------------------
 LEGAL_FIX = {
     "suo moto": "suo motu",
@@ -73,7 +76,7 @@ def is_reference_like(line: str) -> bool:
     )
 
 # -------------------------------------------------------
-#      6) LanguageTool call
+#      6) LanguageTool API
 # -------------------------------------------------------
 def lt_check_sentence(sentence: str) -> dict:
     try:
@@ -84,7 +87,7 @@ def lt_check_sentence(sentence: str) -> dict:
         return {"matches": []}
 
 # -------------------------------------------------------
-#      7) Groq check
+#      7) Groq check (LLM grammar)
 # -------------------------------------------------------
 def groq_check(sentence: str, lt_wrong_words: list) -> list:
 
@@ -216,7 +219,7 @@ def process_text_line_by_line(text: str) -> str:
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        text_input = request.form.get("text", "").trim()
+        text_input = request.form.get("text", "").strip()
         file = request.files.get("file")
 
         if file and file.filename.endswith(".docx"):
