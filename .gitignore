@@ -1,24 +1,4 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
-# Virtual environment
-venv/
-env/
-
-# Environment variables
 .env
-
-# OS specific files
-.DS_Store
-Thumbs.db
-
-# Docx output
-static/Corrected_Final_Output.docx
-
-# VSCode settings
-.vscode/
-
-# Logs
-*.log
+__pycache__
+*.pyc
+static/*.docx
