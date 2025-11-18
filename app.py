@@ -12,37 +12,27 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # -------------------------------------------------------
-#       🔥 Render Proxy Bug Fix (MANDATORY)
-# -------------------------------------------------------
-# Render server apne aap proxy vars inject karta hai
-# jo Groq client ko crash kar dete hain.
-for proxy_var in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy"]:
-    if proxy_var in os.environ:
-        del os.environ[proxy_var]
-
-# -------------------------------------------------------
-# 2) Groq client init (fixed)
+# 2) Groq client init → CLEAN & WORKING (proxy hack hata diya)
 # -------------------------------------------------------
 from groq import Groq
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
 groq_client = None
-try:
-    if GROQ_API_KEY and GROQ_API_KEY.strip():
+
+if GROQ_API_KEY and GROQ_API_KEY.strip():
+    try:
         groq_client = Groq(api_key=GROQ_API_KEY)
-        print("✅ Groq Loaded Successfully")
-    else:
-        print("⚠️ GROQ_API_KEY missing or empty")
-except Exception as e:
-    print("❌ Groq Init Error:", e)
-    groq_client = None
+        print("Groq Loaded Successfully")
+    except Exception as e:
+        print("Groq Init Error:", str(e))
+        groq_client = None
+else:
+    print("GROQ_API_KEY missing or empty")
 
 # -------------------------------------------------------
 # 3) Flask app + LanguageTool URL
 # -------------------------------------------------------
 app = Flask(__name__)
-
 LT_API_URL = "https://api.languagetool.org/v2/check"
 
 # -------------------------------------------------------
@@ -54,10 +44,8 @@ try:
 except Exception:
     BLACKLAW = {}
 
-
 def normalize_key(word: str) -> str:
     return re.sub(r"[^a-z\s]", "", word.lower().strip())
-
 
 # -------------------------------------------------------
 # 5) Legal fix rules
@@ -100,7 +88,6 @@ def lt_check_sentence(sentence: str) -> dict:
 # 7) Groq check (LLM grammar) + SAFE FIX
 # -------------------------------------------------------
 def groq_check(sentence: str, lt_wrong_words: list) -> list:
-
     if (not groq_client) or (not lt_wrong_words):
         return []
 
@@ -112,10 +99,9 @@ def groq_check(sentence: str, lt_wrong_words: list) -> list:
 
     prompt = f"""
 You are a hybrid LEGAL + GRAMMAR correction engine.
-
 RULES:
 1. Only correct words that appear in: {lt_wrong_words}
-2. Never correct helper words: ["was","the","is","and","are","to","for","of","in","at","by","on","with"]
+2. Never correct helper words: {list(IGNORE_WORDS)}
 3. Apply Black's Law correction:
    - suo moto → suo motu
    - prima facia → prima facie
@@ -130,20 +116,17 @@ Sentence:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0
+            temperature=0,
+            max_tokens=512
         )
-
         raw = response.choices[0].message.content or ""
         match = re.search(r"\[.*?\]", raw, re.DOTALL)
         if not match:
             return []
-
         return json.loads(match.group(0))
-
     except Exception as e:
         print("GROQ ERROR:", e)
         return []
-
 
 # -------------------------------------------------------
 # 8) Legal phrase detection
@@ -160,16 +143,12 @@ def detect_legal(sentence: str):
 # 9) Build highlighted HTML (contains SAFE FIX)
 # -------------------------------------------------------
 def process_text_line_by_line(text: str) -> str:
-
     lines = text.split("\n")
     final_html = []
-
     for line in lines:
-
         if not line.strip():
             final_html.append("<p></p>")
             continue
-
         if is_reference_like(line):
             final_html.append(f"<p>{line}</p>")
             continue
@@ -188,41 +167,45 @@ def process_text_line_by_line(text: str) -> str:
         groq_hits = groq_check(working, lt_wrong_words)
 
         combined = {}
-
         for wrong, correct, meaning in legal_hits:
-            combined.setdefault(wrong, {"black": correct, "groq": None})
+            combined.setdefault(wrong.lower(), {"black": correct, "groq": None, "meaning": meaning})
 
         for g in groq_hits:
             if isinstance(g, dict):
                 wrong = (g.get("wrong") or "").strip()
                 suggestion = (g.get("suggestion") or "").strip()
-
                 if wrong and suggestion:
-                    combined.setdefault(wrong, {"black": None, "groq": None})
-                    combined[wrong]["groq"] = suggestion
+                    key = wrong.lower()
+                    if key not in combined:
+                        combined[key] = {"black": None, "groq": None, "meaning": ""}
+                    combined[key]["groq"] = suggestion
 
-        for wrong, sug in combined.items():
-            black = sug["black"] or ""
-            groq = sug["groq"] or ""
+        for wrong_lower, data in combined.items():
+            wrong_original = next(
+                (w for w in re.findall(rf"\b\w+\b", html_line) if w.lower() == wrong_lower), wrong_lower.title()
+            )
+            black = data["black"] or ""
+            groq = data["groq"] or ""
+            meaning = data["meaning"]
 
             span = (
                 f"<span class='grammar-wrong' "
-                f"data-wrong='{wrong}' "
+                f"data-wrong='{wrong_original}' "
                 f"data-black='{black}' "
-                f"data-groq='{groq}'>{wrong}</span>"
+                f"data-groq='{groq}' "
+                f"data-meaning='{meaning}'>{wrong_original}</span>"
             )
-
             html_line = re.sub(
-                rf"\b{re.escape(wrong)}\b",
+                rf"\b{re.escape(wrong_original)}\b",
                 span,
                 html_line,
+                count=1,
                 flags=re.IGNORECASE
             )
 
         final_html.append(f"<p>{html_line}</p>")
 
     return "\n".join(final_html)
-
 
 # -------------------------------------------------------
 # 10) Routes
@@ -235,42 +218,45 @@ def index():
 
         if file and file.filename.endswith(".docx"):
             doc = Document(file)
-            text = "\n".join([p.text for p in doc.paragraphs])
+            text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
         else:
             text = text_input
+
+        if not text.strip():
+            return render_template("index.html", error="No text found!")
 
         output = process_text_line_by_line(text)
         return render_template("result.html", highlighted_html=output)
 
     return render_template("index.html")
 
-
 @app.route("/download_corrected", methods=["POST"])
 def download_corrected():
-
     final_text = request.form.get("final_text", "")
     replacements = json.loads(request.form.get("replacements", "[]"))
 
     doc = Document()
     for line in final_text.split("\n"):
-        doc.add_paragraph(line)
+        if line.strip():
+            doc.add_paragraph(line)
 
+    # Apply replacements
     for para in doc.paragraphs:
         for rep in replacements:
-            wrong = rep["old"]
-            correct = rep["new"]
-            para.text = re.sub(
-                rf"\b{re.escape(wrong)}\b",
-                correct,
-                para.text,
-                flags=re.IGNORECASE
-            )
+            wrong = rep.get("old", "")
+            correct = rep.get("new", "")
+            if wrong and correct:
+                para.text = re.sub(
+                    rf"\b{re.escape(wrong)}\b",
+                    correct,
+                    para.text,
+                    flags=re.IGNORECASE
+                )
 
     output_path = "static/Corrected_Final_Output.docx"
     doc.save(output_path)
 
-    return send_file(output_path, as_attachment=True)
-
+    return send_file(output_path, as_attachment=True, download_name="Corrected_Document.docx")
 
 # -------------------------------------------------------
 # 11) Run app
