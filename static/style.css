@@ -7,7 +7,6 @@ body {
   margin: 0;
   padding: 0;
 }
-
 .container {
   max-width: 950px;
   margin: 35px auto;
@@ -16,7 +15,6 @@ body {
   border-radius: 16px;
   box-shadow: 0 10px 25px rgba(0,0,0,0.2);
 }
-
 h1, h2 {
   margin-top: 0;
   color: #222;
@@ -36,7 +34,6 @@ textarea {
   line-height: 1.6;
   background-color: #f7f8ff;
 }
-
 input[type="file"] {
   display: block;
   margin-bottom: 16px;
@@ -45,7 +42,6 @@ input[type="file"] {
   border-radius: 10px;
   background: #f7f8ff;
 }
-
 button {
   background: #4e54c8;
   color: #fff;
@@ -57,7 +53,6 @@ button {
   font-weight: 600;
   transition: 0.25s;
 }
-
 button:hover {
   background: #5d63e2;
 }
@@ -79,101 +74,116 @@ button:hover {
 ================================================ */
 .text-area {
   border: 1px solid #ddd;
-  padding: 20px;
+  padding: 22px;
   border-radius: 12px;
   background: #fafafa;
-  min-height: 160px;
+  min-height: 180px;
   white-space: pre-wrap;
-  font-size: 16px;
-  line-height: 1.8;
+  font-size: 17px;
+  line-height: 1.9;
+  color: #222;
 }
 
 /* ================================================
    HIGHLIGHT STYLES
 ================================================ */
-
-/* 🟣 Wrong grammar word = Purple underline */
+/* Purple underline = Wrong word (clickable) */
 .grammar-wrong {
-  border-bottom: 3px solid purple;
-  padding: 2px 3px;
+  border-bottom: 3.5px solid #9c27b0;
+  padding: 1px 4px;
   font-weight: 600;
   color: #000;
   cursor: pointer;
+  border-radius: 2px;
+  transition: all 0.2s ease;
+}
+.grammar-wrong:hover {
+  background: #e1bee7;
+  border-bottom-color: #7b1fa2;
 }
 
-/* 🟨 Grammar suggestion word = yellow box */
-.grammar-suggest {
-  background: #fff39c;
-  padding: 3px 6px;
-  margin-left: 4px;
-  border-radius: 4px;
-  font-weight: bold;
-  color: #111;
+/* Green highlight = User applied correction */
+.corrected {
+  background: #c8e6c9 !important;
+  color: #1b5e20 !important;
+  padding: 4px 8px !important;
+  border-radius: 6px !important;
+  font-weight: bold !important;
 }
 
-/* 🟨 Legal corrected word = yellow highlight */
-.legal-correct {
-  background: #fff067;
-  padding: 3px 6px;
-  border-radius: 5px;
-  font-weight: bold;
-  cursor: pointer;
+/* Line-through = Ignored word */
+.ignored {
+  text-decoration: line-through;
+  color: #777;
+  border-bottom: none !important;
 }
 
 /* ================================================
-   POPUP BOX (Suggestions Dialog)
+   POPUP BOX (Suggestions Dialog) — FULLY UPGRADED
 ================================================ */
 .popup-box {
   position: fixed;
-  top: 25%;
+  top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%) scale(1);
+  transform: translate(-50%, -50%);
   background: #ffffff;
-  padding: 22px;
-  border-radius: 14px;
-  width: 420px;
-  max-width: 95%;
-  box-shadow: 0 8px 35px rgba(0,0,0,0.25);
+  padding: 28px;
+  border-radius: 16px;
+  width: 460px;
+  max-width: 92%;
+  box-shadow: 0 15px 50px rgba(0,0,0,0.3);
   z-index: 9999;
   display: none;
-  animation: fadeIn 0.2s ease-out;
+  animation: popupFade 0.3s ease-out;
+  border: 1px solid #e0e0e0;
 }
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translate(-50%, -45%) scale(0.95); }
-  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+@keyframes popupFade {
+  from { opacity: 0; transform: translate(-50%, -60%) scale(0.94); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
 
 .popup-box h4 {
-  margin-top: 0;
-  font-size: 20px;
+  margin: 0 0 18px 0;
+  font-size: 22px;
   color: #4e54c8;
   font-weight: 700;
+  text-align: center;
 }
 
-.popup-btn {
-  margin-right: 10px;
-  width: auto;
-}
-
-/* Multi-dictionary dropdown (future support) */
-.suggestion-select {
-  width: 100%;
-  padding: 10px;
-  margin: 10px 0 15px 0;
+/* Meaning box inside popup */
+.meaning {
+  background: #f8f9ff;
+  padding: 12px;
   border-radius: 8px;
-  border: 1px solid #ccc;
-  font-size: 14px;
+  font-style: italic;
+  color: #444;
+  margin: 12px 0;
+  border-left: 4px solid #8f94fb;
+  font-size: 14.5px;
 }
+
+/* Buttons inside popup */
+.popup-btn {
+  margin: 8px 6px 0 0 !important;
+  padding: 10px 16px !important;
+  font-size: 14.5px !important;
+}
+
+/* Specific button colors */
+#useBlackBtn { background: #2e7d32; }
+#useBlackBtn:hover { background: #1b5e20; }
+
+#useGroqBtn { background: #0069d9; }
+#useGroqBtn:hover { background: #004494; }
 
 /* ================================================
    HOVER EFFECTS
 ================================================ */
 .grammar-wrong:hover,
-.grammar-suggest:hover,
-.legal-correct:hover {
-  opacity: 0.85;
-  transition: 0.15s ease;
+.corrected:hover {
+  opacity: 0.9;
+  transform: scale(1.02);
+  transition: 0.2s ease;
 }
 
 /* ================================================
@@ -181,25 +191,22 @@ button:hover {
 ================================================ */
 @media (max-width: 640px) {
   .container {
-    margin: 15px;
+    margin: 12px;
     padding: 20px;
   }
-
-  textarea {
-    font-size: 14px;
-  }
-
   .text-area {
-    font-size: 14px;
-  }
-
-  .popup-box {
-    width: 92%;
+    font-size: 15.5px;
     padding: 18px;
   }
-
-  button {
+  .popup-box {
+    width: 94%;
+    padding: 22px;
+  }
+  .popup-box h4 {
+    font-size: 19px;
+  }
+  button, .popup-btn {
     width: 100%;
-    margin-top: 10px;
+    margin: 8px 0 !important;
   }
 }
