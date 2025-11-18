@@ -43,11 +43,8 @@ try:
 except Exception:
     BLACKLAW = {}
 
-
 def normalize_key(word: str) -> str:
-    """Normalize keys for Black's Law lookup."""
     return re.sub(r"[^a-z\s]", "", word.lower().strip())
-
 
 # -------------------------------------------------------
 #      5) Legal fix rules (wrong → correct)
@@ -59,15 +56,12 @@ LEGAL_FIX = {
     "ratio decedendi": "ratio decidendi",
 }
 
-# Common helper words we never want Groq to touch
 IGNORE_WORDS = {
     "was", "the", "is", "and", "to", "in", "for",
     "of", "at", "by", "on", "with"
 }
 
-
 def is_reference_like(line: str) -> bool:
-    """Lines that look like references / links -> skip grammar checks."""
     s = line.strip()
     return (
         not s
@@ -78,9 +72,8 @@ def is_reference_like(line: str) -> bool:
         or re.match(r"^\(.+\d{4}.*\)$", s)
     )
 
-
 # -------------------------------------------------------
-#      6) LanguageTool call (basic grammar)
+#      6) LanguageTool call
 # -------------------------------------------------------
 def lt_check_sentence(sentence: str) -> dict:
     try:
@@ -90,25 +83,14 @@ def lt_check_sentence(sentence: str) -> dict:
     except Exception:
         return {"matches": []}
 
-
 # -------------------------------------------------------
-#      7) Groq check (legal + grammar)
+#      7) Groq check
 # -------------------------------------------------------
 def groq_check(sentence: str, lt_wrong_words: list) -> list:
-    """
-    Groq MUST follow:
-      ✓ Black’s Law Dictionary mapping
-      ✓ LanguageTool-detected wrong words
-      ✓ Multi-word legal terms as ONE unit
-      ✓ Ignore helper words completely
-    Returns: list[{"wrong": "...", "suggestion": "..."}]
-    """
 
-    # No client or nothing flagged by LT → skip Groq
     if (not groq_client) or (not lt_wrong_words):
         return []
 
-    # Remove helper words from LT list (extra safety)
     lt_wrong_words = [
         w for w in lt_wrong_words if w.lower() not in IGNORE_WORDS
     ]
@@ -118,45 +100,28 @@ def groq_check(sentence: str, lt_wrong_words: list) -> list:
     prompt = f"""
 You are a hybrid LEGAL + GRAMMAR correction engine.
 
-RULES (FOLLOW STRICTLY):
+RULES:
+1. Only correct words that appear in: {lt_wrong_words}
+2. Never correct helper words: ["was","the","is","and","are","to","for","of","in","at","by","on","with"]
+3. Apply Black's Law correction:
+   - suo moto → suo motu
+   - prima facia → prima facie
+   - ratio decedendi → ratio decidendi
+   - mens reaa → mens rea
+4. Do NOT explain. Output ONLY a pure JSON array.
 
-1. Only correct words/phrases that appear in this list from LanguageTool:
-   {lt_wrong_words}
-
-2. NEVER correct these common helper words:
-   ["was", "the", "and", "is", "are", "to", "for", "of", "in", "at", "by", "on", "with"]
-
-3. Apply Black's Law Dictionary corrections exactly:
-   - "suo moto"  -> "suo motu"
-   - "prima facia" -> "prima facie"
-   - "ratio decedendi" -> "ratio decidendi"
-   - "mens reaa" -> "mens rea"
-
-4. Treat multi-word legal terms as ONE UNIT.
-   Do NOT split or partially change them.
-
-5. NO explanations. NO extra text.
-   Output ONLY a PURE JSON array.
-
-Example valid output:
-[
-  {{"wrong": "prima facia", "suggestion": "prima facie"}},
-  {{"wrong": "suo moto", "suggestion": "suo motu"}}
-]
-
-Sentence to correct:
+Sentence:
 \"\"\"{sentence}\"\"\""""
 
     try:
         response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",   # ✅ your available Groq model
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0
         )
 
         raw = response.choices[0].message.content or ""
 
-        # Extract JSON array from response
         match = re.search(r"\[.*?\]", raw, re.DOTALL)
         if not match:
             return []
@@ -167,27 +132,19 @@ Sentence to correct:
         print("GROQ ERROR:", e)
         return []
 
-
 # -------------------------------------------------------
-#      8) Detect legal phrases using manual list
+#      8) Legal phrase detection
 # -------------------------------------------------------
 def detect_legal(sentence: str):
-    """
-    Returns list of tuples:
-    [(wrong_phrase, correct_phrase, meaning), ...]
-    """
     results = []
-
     for wrong, correct in LEGAL_FIX.items():
         if re.search(rf"\b{re.escape(wrong)}\b", sentence, re.IGNORECASE):
             meaning = BLACKLAW.get(normalize_key(correct), "")
             results.append((wrong, correct, meaning))
-
     return results
 
-
 # -------------------------------------------------------
-#      9) Build highlighted HTML line by line
+#      9) Build highlighted HTML
 # -------------------------------------------------------
 def process_text_line_by_line(text: str) -> str:
 
@@ -196,12 +153,10 @@ def process_text_line_by_line(text: str) -> str:
 
     for line in lines:
 
-        # Blank line
         if not line.strip():
             final_html.append("<p></p>")
             continue
 
-        # Reference-like line: no grammar highlight
         if is_reference_like(line):
             final_html.append(f"<p>{line}</p>")
             continue
@@ -209,7 +164,6 @@ def process_text_line_by_line(text: str) -> str:
         working = line
         html_line = line
 
-        # ----- LanguageTool: find wrong words -----
         lt_res = lt_check_sentence(working)
         lt_wrong_words = []
         for m in lt_res.get("matches", []):
@@ -217,20 +171,14 @@ def process_text_line_by_line(text: str) -> str:
             if wrong.strip() and wrong.lower() not in IGNORE_WORDS:
                 lt_wrong_words.append(wrong)
 
-        # ----- Manual Legal detection -----
         legal_hits = detect_legal(working)
-
-        # ----- Groq suggestions (top-level intelligence) -----
         groq_hits = groq_check(working, lt_wrong_words)
 
-        # Combine suggestions
-        combined = {}   # {wrong: {"black": ..., "groq": ...}}
+        combined = {}
 
-        # Legal dictionary → Black suggestion
         for wrong, correct, meaning in legal_hits:
             combined.setdefault(wrong, {"black": correct, "groq": None})
 
-        # Groq result → Groq suggestion
         for g in groq_hits:
             wrong = (g.get("wrong") or "").strip()
             suggestion = (g.get("suggestion") or "").strip()
@@ -239,7 +187,6 @@ def process_text_line_by_line(text: str) -> str:
             combined.setdefault(wrong, {"black": None, "groq": None})
             combined[wrong]["groq"] = suggestion
 
-        # ----- Build HTML spans -----
         for wrong, sug in combined.items():
             black = sug["black"] or ""
             groq = sug["groq"] or ""
@@ -269,7 +216,7 @@ def process_text_line_by_line(text: str) -> str:
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        text_input = request.form.get("text", "").strip()
+        text_input = request.form.get("text", "").trim()
         file = request.files.get("file")
 
         if file and file.filename.endswith(".docx"):
@@ -294,7 +241,6 @@ def download_corrected():
     for line in final_text.split("\n"):
         doc.add_paragraph(line)
 
-    # Apply replacements into DOCX
     for para in doc.paragraphs:
         for rep in replacements:
             wrong = rep["old"]
@@ -313,7 +259,8 @@ def download_corrected():
 
 
 # -------------------------------------------------------
-#      11) Run app
+#      11) Run app (Render compatible)
 # -------------------------------------------------------
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
