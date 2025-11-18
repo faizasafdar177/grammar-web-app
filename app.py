@@ -192,7 +192,6 @@ def process_text_line_by_line(text: str) -> str:
         for wrong, correct, meaning in legal_hits:
             combined.setdefault(wrong, {"black": correct, "groq": None})
 
-        # SAFE FIX (ignore bad Groq responses)
         for g in groq_hits:
             if isinstance(g, dict):
                 wrong = (g.get("wrong") or "").strip()
