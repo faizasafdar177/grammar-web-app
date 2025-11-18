@@ -29,7 +29,6 @@ except Exception as e:
     print("❌ Groq Init Error:", e)
     groq_client = None
 
-
 # -------------------------------------------------------
 #           3) Flask app + LanguageTool URL
 # -------------------------------------------------------
@@ -212,7 +211,6 @@ def process_text_line_by_line(text: str) -> str:
 
     return "\n".join(final_html)
 
-
 # -------------------------------------------------------
 #      10) Routes
 # -------------------------------------------------------
@@ -259,7 +257,6 @@ def download_corrected():
     doc.save(output_path)
 
     return send_file(output_path, as_attachment=True)
-
 
 # -------------------------------------------------------
 #      11) Run app (Render compatible)
