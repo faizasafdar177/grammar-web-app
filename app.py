@@ -12,6 +12,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # -------------------------------------------------------
+#       🔥 Render Proxy Bug Fix (MANDATORY)
+# -------------------------------------------------------
+# Render server apne aap proxy vars inject karta hai
+# jo Groq client ko crash kar dete hain.
+for proxy_var in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy"]:
+    if proxy_var in os.environ:
+        del os.environ[proxy_var]
+
+# -------------------------------------------------------
 # 2) Groq client init (fixed)
 # -------------------------------------------------------
 from groq import Groq
@@ -125,7 +134,6 @@ Sentence:
         )
 
         raw = response.choices[0].message.content or ""
-
         match = re.search(r"\[.*?\]", raw, re.DOTALL)
         if not match:
             return []
@@ -184,18 +192,15 @@ def process_text_line_by_line(text: str) -> str:
         for wrong, correct, meaning in legal_hits:
             combined.setdefault(wrong, {"black": correct, "groq": None})
 
-        # ----------- SAFE FIX APPLIED HERE --------------
+        # SAFE FIX (ignore bad Groq responses)
         for g in groq_hits:
-            if isinstance(g, dict):  # only accept valid dict
+            if isinstance(g, dict):
                 wrong = (g.get("wrong") or "").strip()
                 suggestion = (g.get("suggestion") or "").strip()
 
                 if wrong and suggestion:
                     combined.setdefault(wrong, {"black": None, "groq": None})
                     combined[wrong]["groq"] = suggestion
-            else:
-                print("⚠️ Groq returned non-dict:", g)
-        # -------------------------------------------------
 
         for wrong, sug in combined.items():
             black = sug["black"] or ""
@@ -219,6 +224,7 @@ def process_text_line_by_line(text: str) -> str:
 
     return "\n".join(final_html)
 
+
 # -------------------------------------------------------
 # 10) Routes
 # -------------------------------------------------------
@@ -238,6 +244,7 @@ def index():
         return render_template("result.html", highlighted_html=output)
 
     return render_template("index.html")
+
 
 @app.route("/download_corrected", methods=["POST"])
 def download_corrected():
@@ -264,6 +271,7 @@ def download_corrected():
     doc.save(output_path)
 
     return send_file(output_path, as_attachment=True)
+
 
 # -------------------------------------------------------
 # 11) Run app
