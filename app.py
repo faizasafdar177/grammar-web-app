@@ -7,12 +7,12 @@ import json
 from dotenv import load_dotenv
 
 # -------------------------------------------------------
-#           1) Load environment variables (.env)
+# 1) Load environment variables (.env)
 # -------------------------------------------------------
 load_dotenv()
 
 # -------------------------------------------------------
-#           2) Groq client init (fixed for Render)
+# 2) Groq client init (fixed)
 # -------------------------------------------------------
 from groq import Groq
 
@@ -30,14 +30,14 @@ except Exception as e:
     groq_client = None
 
 # -------------------------------------------------------
-#           3) Flask app + LanguageTool URL
+# 3) Flask app + LanguageTool URL
 # -------------------------------------------------------
 app = Flask(__name__)
 
 LT_API_URL = "https://api.languagetool.org/v2/check"
 
 # -------------------------------------------------------
-#      4) Load Black’s Law Dictionary JSON (local)
+# 4) Load Black’s Law Dictionary JSON
 # -------------------------------------------------------
 try:
     with open("blacklaw_terms.json", "r", encoding="utf-8") as f:
@@ -51,7 +51,7 @@ def normalize_key(word: str) -> str:
 
 
 # -------------------------------------------------------
-#      5) Legal fix rules (wrong → correct)
+# 5) Legal fix rules
 # -------------------------------------------------------
 LEGAL_FIX = {
     "suo moto": "suo motu",
@@ -77,7 +77,7 @@ def is_reference_like(line: str) -> bool:
     )
 
 # -------------------------------------------------------
-#      6) LanguageTool API
+# 6) LanguageTool API
 # -------------------------------------------------------
 def lt_check_sentence(sentence: str) -> dict:
     try:
@@ -88,7 +88,7 @@ def lt_check_sentence(sentence: str) -> dict:
         return {"matches": []}
 
 # -------------------------------------------------------
-#      7) Groq check (LLM grammar)
+# 7) Groq check (LLM grammar) + SAFE FIX
 # -------------------------------------------------------
 def groq_check(sentence: str, lt_wrong_words: list) -> list:
 
@@ -136,8 +136,9 @@ Sentence:
         print("GROQ ERROR:", e)
         return []
 
+
 # -------------------------------------------------------
-#      8) Legal phrase detection
+# 8) Legal phrase detection
 # -------------------------------------------------------
 def detect_legal(sentence: str):
     results = []
@@ -148,7 +149,7 @@ def detect_legal(sentence: str):
     return results
 
 # -------------------------------------------------------
-#      9) Build highlighted HTML
+# 9) Build highlighted HTML (contains SAFE FIX)
 # -------------------------------------------------------
 def process_text_line_by_line(text: str) -> str:
 
@@ -183,13 +184,18 @@ def process_text_line_by_line(text: str) -> str:
         for wrong, correct, meaning in legal_hits:
             combined.setdefault(wrong, {"black": correct, "groq": None})
 
+        # ----------- SAFE FIX APPLIED HERE --------------
         for g in groq_hits:
-            wrong = (g.get("wrong") or "").strip()
-            suggestion = (g.get("suggestion") or "").strip()
-            if not wrong or not suggestion:
-                continue
-            combined.setdefault(wrong, {"black": None, "groq": None})
-            combined[wrong]["groq"] = suggestion
+            if isinstance(g, dict):  # only accept valid dict
+                wrong = (g.get("wrong") or "").strip()
+                suggestion = (g.get("suggestion") or "").strip()
+
+                if wrong and suggestion:
+                    combined.setdefault(wrong, {"black": None, "groq": None})
+                    combined[wrong]["groq"] = suggestion
+            else:
+                print("⚠️ Groq returned non-dict:", g)
+        # -------------------------------------------------
 
         for wrong, sug in combined.items():
             black = sug["black"] or ""
@@ -213,9 +219,8 @@ def process_text_line_by_line(text: str) -> str:
 
     return "\n".join(final_html)
 
-
 # -------------------------------------------------------
-#      10) Routes
+# 10) Routes
 # -------------------------------------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -233,7 +238,6 @@ def index():
         return render_template("result.html", highlighted_html=output)
 
     return render_template("index.html")
-
 
 @app.route("/download_corrected", methods=["POST"])
 def download_corrected():
@@ -261,9 +265,8 @@ def download_corrected():
 
     return send_file(output_path, as_attachment=True)
 
-
 # -------------------------------------------------------
-#      11) Run app (Render compatible)
+# 11) Run app
 # -------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
