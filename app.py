@@ -98,9 +98,8 @@ LEGAL_FIX = {
     "audi alteram partum": "audi alteram partem",
 }
 
-IGNORE_WORDS = {
-    "was", "the", "is", "and", "to", "in", "for", "of", "at", "by", "on", "with"
-}
+# ✅ CHANGE: Do NOT ignore any words (tenses words included)
+IGNORE_WORDS = set()
 
 def is_reference_like(line: str) -> bool:
     s = line.strip()
@@ -172,7 +171,8 @@ def groq_word_check(sentence: str, lt_wrong_words: List[str]) -> List[Dict[str, 
     if (not groq_client) or (not lt_wrong_words):
         return []
 
-    lt_wrong_words = [w for w in lt_wrong_words if w.lower() not in IGNORE_WORDS]
+    # ✅ CHANGE: No ignore filtering; only de-duplicate
+    lt_wrong_words = list(dict.fromkeys([w.strip() for w in lt_wrong_words if w.strip()]))
     if not lt_wrong_words:
         return []
 
@@ -381,7 +381,8 @@ def process_text_line_by_line(text: str, mode: str = "word") -> str:
         lt_wrong_words = []
         for m in lt_res.get("matches", []):
             wrong = working[m["offset"]:m["offset"] + m["length"]]
-            if wrong.strip() and wrong.lower() not in IGNORE_WORDS:
+            # ✅ CHANGE: no ignore; keep tense words too
+            if wrong.strip() and len(wrong.strip()) > 0:
                 lt_wrong_words.append(wrong)
 
         legal_hits = detect_legal(working)
@@ -423,7 +424,8 @@ def process_text_line_by_line(text: str, mode: str = "word") -> str:
                 f"{ow}</span>"
             )
 
-            html_line = re.sub(rf"\b{re.escape(str(ow))}\b", span, html_line, count=1)
+            # ✅ CHANGE: stable replace (no regex boundary issues)
+            html_line = html_line.replace(str(ow), span, 1)
 
         final_html.append(f"<p>{html_line}</p>")
 
