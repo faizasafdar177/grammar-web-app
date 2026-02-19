@@ -5,114 +5,67 @@
   <title>Grammar Check Result</title>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
   <style>
-    body {
-      font-family: 'Poppins', sans-serif;
-      background: #fff;
-      padding: 8px;
-      margin: 0;
-      max-width: 280px;   /* sidebar width */
-      overflow-x: hidden;
-    }
-    .container {
-      background: #fff;
-      border-radius: 6px;
-      padding: 8px;
-      width: 100%;
-      box-shadow: none;
-    }
-    h1 {
-      font-size: 15px;
-      margin: 0 0 8px 0;
-      color: #4e54c8;
-      text-align: center;
-    }
+    body { font-family:'Poppins',sans-serif; background:#fff; padding:10px; margin:0; }
+    h1 { font-size:16px; margin:0 0 10px 0; color:#4e54c8; text-align:center; }
     .text-area {
-      border: 1px solid #ddd;
-      padding: 8px;
-      border-radius: 6px;
-      line-height: 1.4;
-      font-size: 13px;
-      max-height: 220px;
-      overflow-y: auto;
+      border:1px solid #ddd; padding:10px; border-radius:8px; line-height:1.5;
+      font-size:14px; max-height:360px; overflow-y:auto;
     }
-    .grammar-wrong {
-      border-bottom: 2px solid purple;
-      font-weight: bold;
-      cursor: pointer;
-      padding: 1px 2px;
-    }
-    .grammar-wrong:hover { background: #f0e6ff; }
+    .grammar-wrong { border-bottom:2px solid purple; font-weight:bold; cursor:pointer; padding:1px 2px; }
+    .grammar-wrong:hover { background:#f0e6ff; }
     .popup-box {
-      position: absolute;
+      position: fixed;
+      left: 50%;
+      top: 20%;
+      transform: translateX(-50%);
       background: white;
-      padding: 8px;
-      border-radius: 6px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      width: 240px;
-      max-width: 95%;
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+      width: 320px;
+      max-width: 92%;
       z-index: 9999;
       display: none;
-      font-size: 12px;
+      font-size: 13px;
     }
-    .label-title {
-      font-weight: bold;
-      color: #4e54c8;
-      font-size: 0.9rem;
-      margin-bottom: 6px;
-    }
-    .meaning {
-      font-style: italic;
-      color: #666;
-      margin: 4px 0;
-      padding: 4px;
-      background: #f8f9fa;
-      border-radius: 4px;
-      font-size: 12px;
-    }
-    button {
-      margin-top: 4px;
-      width: 100%;
-      font-size: 12px;
-      padding: 6px;
-      border-radius: 4px;
-      border: none;
-      cursor: pointer;
-    }
+    .meaning { font-style: italic; color:#666; margin:6px 0; padding:6px; background:#f8f9fa; border-radius:6px; }
+    button { margin-top:6px; width:100%; font-size:13px; padding:8px; border-radius:6px; border:none; cursor:pointer; }
+    .btn { background:#4e54c8; color:white; }
+    .btn2 { background:#6c757d; color:white; }
+    .row { display:flex; gap:8px; }
+    .row button { width:50%; }
+    .topbar { display:flex; gap:10px; margin:10px 0; }
+    .topbar a { text-decoration:none; font-weight:600; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>✨ Grammar Check Result</h1>
-    <div id="textContainer" class="text-area">{{ highlighted_html|safe }}</div>
 
-    <div id="popup" class="popup-box">
-      <h4 class="label-title">Correction Suggestion</h4>
-      <p><b>Wrong Word:</b> <span id="popupWrong" style="color:red; font-weight:bold;"></span></p>
+  <h1>✨ Grammar Check Result</h1>
 
-      <!-- Meaning from Black's Law -->
-      <div id="meaningDiv" class="meaning" style="display:none;"></div>
+  <div class="topbar">
+    <a href="/">← Back</a>
+    <form id="downloadForm" action="/download_corrected" method="post" style="margin-left:auto;">
+      <input type="hidden" name="final_text" id="finalText">
+      <input type="hidden" name="replacements" id="replacementsField" value="[]">
+      <button type="submit" class="btn">Download DOCX</button>
+    </form>
+  </div>
 
-      <!-- Individual Suggestions -->
-      <div id="blackDiv"><p><b>Black's Law Suggestion:</b> <span id="popupBlack" style="color:green; font-weight:bold;"></span></p></div>
-      <div id="groqDiv"><p><b>Groq/AI Suggestion:</b> <span id="popupGroq" style="color:#0066cc; font-weight:bold;"></span></p></div>
+  <div id="textContainer" class="text-area">{{ highlighted_html|safe }}</div>
 
-      <!-- Combined Suggestions -->
-      <div id="combinedDiv" style="margin-top:6px; display:none;">
-        <p><b>Combined Suggestions:</b></p>
-        <ul style="margin:0; padding-left:16px; font-size:12px;">
-          <li id="combinedBlack" style="color:green;"></li>
-          <li id="combinedGroq" style="color:#0066cc;"></li>
-        </ul>
-      </div>
+  <!-- Popup (only needed in word mode; harmless in rewrite mode) -->
+  <div id="popup" class="popup-box">
+    <p><b>Wrong Word:</b> <span id="popupWrong" style="color:red; font-weight:bold;"></span></p>
+    <div id="meaningDiv" class="meaning" style="display:none;"></div>
+    <div id="blackDiv" style="display:none;"><p><b>Black's Law:</b> <span id="popupBlack" style="color:green; font-weight:bold;"></span></p></div>
+    <div id="groqDiv" style="display:none;"><p><b>Groq/AI:</b> <span id="popupGroq" style="color:#0066cc; font-weight:bold;"></span></p></div>
 
-      <!-- Action Buttons -->
-      <div class="mt-2">
-        <button id="useBlackBtn" onclick="applyBlack()">Use Black's Law</button>
-        <button id="useGroqBtn" onclick="applyGroq()">Use Groq/AI</button>
-        <button onclick="ignoreFix()">Ignore</button>
-        <button onclick="closePopup()">Cancel</button>
-      </div>
+    <div class="row">
+      <button id="useBlackBtn" class="btn" onclick="applyBlack()">Use Black</button>
+      <button id="useGroqBtn" class="btn" onclick="applyGroq()">Use Groq</button>
     </div>
+    <button class="btn2" onclick="ignoreFix()">Ignore</button>
+    <button class="btn2" onclick="closePopup()">Cancel</button>
   </div>
 
 <script>
@@ -123,79 +76,79 @@ let groqSuggestion = "";
 let meaningText = "";
 let replacements = [];
 
+function closePopup() {
+  document.getElementById('popup').style.display = "none";
+}
+
 document.addEventListener('click', function (e) {
-    if (!e.target.classList.contains('grammar-wrong')) return;
+  if (!e.target.classList.contains('grammar-wrong')) return;
 
-    selectedElement = e.target;
-    selectedWrong = selectedElement.dataset.wrong || "";
-    blackSuggestion = selectedElement.dataset.black || "";
-    groqSuggestion = selectedElement.dataset.groq || "";
-    meaningText = selectedElement.dataset.meaning || "";
+  selectedElement = e.target;
+  selectedWrong = selectedElement.dataset.wrong || "";
+  blackSuggestion = selectedElement.dataset.black || "";
+  groqSuggestion = selectedElement.dataset.groq || "";
+  meaningText = selectedElement.dataset.meaning || "";
 
-    if (!blackSuggestion && !groqSuggestion) return;
+  if (!blackSuggestion && !groqSuggestion) return;
 
-    document.getElementById("popupWrong").innerText = selectedWrong;
+  document.getElementById("popupWrong").innerText = selectedWrong;
 
-    if (blackSuggestion) {
-        document.getElementById("popupBlack").innerText = blackSuggestion;
-        document.getElementById("blackDiv").style.display = "block";
-        document.getElementById("useBlackBtn").style.display = "inline-block";
-    } else {
-        document.getElementById("blackDiv").style.display = "none";
-        document.getElementById("useBlackBtn").style.display = "none";
-    }
+  if (blackSuggestion) {
+    document.getElementById("popupBlack").innerText = blackSuggestion;
+    document.getElementById("blackDiv").style.display = "block";
+    document.getElementById("useBlackBtn").style.display = "inline-block";
+  } else {
+    document.getElementById("blackDiv").style.display = "none";
+    document.getElementById("useBlackBtn").style.display = "none";
+  }
 
-    if (groqSuggestion) {
-        document.getElementById("popupGroq").innerText = groqSuggestion;
-        document.getElementById("groqDiv").style.display = "block";
-        document.getElementById("useGroqBtn").style.display = "inline-block";
-    } else {
-        document.getElementById("groqDiv").style.display = "none";
-        document.getElementById("useGroqBtn").style.display = "none";
-    }
+  if (groqSuggestion) {
+    document.getElementById("popupGroq").innerText = groqSuggestion;
+    document.getElementById("groqDiv").style.display = "block";
+    document.getElementById("useGroqBtn").style.display = "inline-block";
+  } else {
+    document.getElementById("groqDiv").style.display = "none";
+    document.getElementById("useGroqBtn").style.display = "none";
+  }
 
-    if (meaningText) {
-        document.getElementById("meaningDiv").innerText = "Meaning: " + meaningText;
-        document.getElementById("meaningDiv").style.display = "block";
-    } else {
-        document.getElementById("meaningDiv").style.display = "none";
-    }
+  if (meaningText) {
+    document.getElementById("meaningDiv").innerText = "Meaning: " + meaningText;
+    document.getElementById("meaningDiv").style.display = "block";
+  } else {
+    document.getElementById("meaningDiv").style.display = "none";
+  }
 
-    // Show combined suggestions if both exist
-    if (blackSuggestion && groqSuggestion) {
-        document.getElementById("combinedBlack").innerText = "Black's Law: " + blackSuggestion;
-        document.getElementById("combinedGroq").innerText = "Groq/AI: " + groqSuggestion;
-        document.getElementById("combinedDiv").style.display = "block";
-    } else {
-        document.getElementById("combinedDiv").style.display = "none";
-    }
-
-    document.getElementById("popup").style.display = "block";
+  document.getElementById("popup").style.display = "block";
 });
 
-function closePopup() {
-    document.getElementById('popup').style.display = "none";
-}
-
-function applyBlack() {
-    if (blackSuggestion) applyFix(blackSuggestion);
-}
-
-function applyGroq() {
-    if (groqSuggestion) applyFix(groqSuggestion);
-}
-
 function applyFix(finalSuggestion) {
-    if (!selectedElement || !finalSuggestion) return;
-    selectedElement.outerHTML = `<span style="background:#d4edda; color:#155724; padding:2px 4px; border-radius:4px; font-weight:bold;">${finalSuggestion}</span>`;
-    replacements.push({old: selectedWrong, new: finalSuggestion});
-    closePopup();
+  if (!selectedElement || !finalSuggestion) return;
+
+  selectedElement.outerHTML =
+    `<span style="background:#d4edda; color:#155724; padding:2px 4px; border-radius:4px; font-weight:bold;">${finalSuggestion}</span>`;
+
+  replacements.push({old: selectedWrong, new: finalSuggestion});
+  document.getElementById("replacementsField").value = JSON.stringify(replacements);
+  closePopup();
 }
+
+function applyBlack() { if (blackSuggestion) applyFix(blackSuggestion); }
+function applyGroq()  { if (groqSuggestion)  applyFix(groqSuggestion); }
 
 function ignoreFix() {
-    selectedElement.outerHTML = `<span style="text-decoration: line-through; color:#888;">${selectedWrong}</span>`;
-    closePopup();
+  if (!selectedElement) return;
+  selectedElement.outerHTML = `<span style="text-decoration: line-through; color:#888;">${selectedWrong}</span>`;
+  closePopup();
 }
+
+// Build final_text for DOCX download (plain text of container)
+function buildFinalText(){
+  const container = document.getElementById("textContainer");
+  const txt = container.innerText || "";
+  document.getElementById("finalText").value = txt;
+}
+buildFinalText();
 </script>
+
 </body>
 </html>
