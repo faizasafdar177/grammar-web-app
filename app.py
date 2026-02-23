@@ -518,9 +518,24 @@ def download_corrected():
 @app.route("/health", methods=["GET"])
 def health():
     return {"status": "ok"}
+@app.route("/check_grammar", methods=["POST"])
+@limiter.limit("30 per minute")
+def check_grammar():
+    require_api_key()  # optional, if you want to enforce API key
+
+    data = request.get_json(force=True) or {}
+    text = (data.get("text", "") or "").strip()
+    mode = (data.get("mode", "word") or "word").strip().lower()
+
+    if len(text) > MAX_TEXT_CHARS:
+        abort(413, description=f"Text too long. Max {MAX_TEXT_CHARS} chars allowed.")
+
+    output = process_text_line_by_line(text, mode=mode)
+    return jsonify({"suggestions": output})
 
 # DEV ONLY
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=False)
+
 
