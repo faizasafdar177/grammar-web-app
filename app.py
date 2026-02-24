@@ -376,6 +376,10 @@ def download_corrected():
 def health():
     return {"status": "ok"}
 
+@app.route("/taskpane.html")
+def taskpane():
+    return render_template("taskpane.html")
+
 
 # -----------------------------
 # 14) RUN APP
@@ -383,3 +387,4 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=False)
+
