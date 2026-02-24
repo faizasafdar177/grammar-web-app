@@ -58,6 +58,13 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_BYTES
 CORS(app)
 
+# ✅ FIX: Allow this app to be embedded in an iframe inside Word Add-in
+@app.after_request
+def allow_iframe_embedding(response):
+    response.headers["X-Frame-Options"] = "ALLOWALL"
+    response.headers["Content-Security-Policy"] = "frame-ancestors *"
+    return response
+
 limiter = Limiter(
     get_remote_address,
     app=app,
@@ -314,7 +321,6 @@ def process_text_line_by_line(text: str, mode: str = "word") -> str:
 @app.route("/", methods=["GET"])
 @limiter.limit("20 per minute")
 def index():
-    # Always render index.html for sidebar UI
     return render_template("index.html")
 
 
@@ -328,10 +334,8 @@ def check_grammar():
     if len(text) > MAX_TEXT_CHARS:
         abort(413, description=f"Text too long. Max {MAX_TEXT_CHARS} chars allowed.")
 
-    # Example grammar processing function
     output = process_text_line_by_line(text, mode=mode)
 
-    # Ensure suggestions are returned as array of {old,new}
     return jsonify({"suggestions": output})
 
 
@@ -379,4 +383,3 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=False)
-
