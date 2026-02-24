@@ -1,60 +1,104 @@
-from flask import Flask, render_template, request, send_file
-from docx import Document
+import os, re, json, logging, tempfile
+from typing import List, Dict, Any, Tuple
+
 import requests
-import os
-import re
-import json
+from flask import Flask, render_template, request, send_file, abort, Response, jsonify
+from flask_cors import CORS
 from dotenv import load_dotenv
-# -------------------------------------------------------
-# 1) Load environment variables (.env)
-# -------------------------------------------------------
+from markupsafe import escape
+from docx import Document
+
+# Rate limiting
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
+# Caching
+from cachetools import TTLCache
+
+# -----------------------------
+# 1) ENV
+# -----------------------------
 load_dotenv()
-# -------------------------------------------------------
-# 2) Groq client init (Render-safe)
-# -------------------------------------------------------
-from groq import Groq
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+APP_API_KEY  = os.getenv("APP_API_KEY", "").strip()   # optional
+LT_API_URL   = os.getenv("LT_API_URL", "https://api.languagetool.org/v2/check").strip()
+
+MAX_TEXT_CHARS = int(os.getenv("MAX_TEXT_CHARS", "12000"))
+MAX_FILE_MB    = int(os.getenv("MAX_FILE_MB", "3"))
+MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024
+
+# -----------------------------
+# 2) LOGGING
+# -----------------------------
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
+log = logging.getLogger("grammar-app")
+
+# -----------------------------
+# 3) GROQ INIT
+# -----------------------------
 groq_client = None
-if GROQ_API_KEY and GROQ_API_KEY.strip():
+if GROQ_API_KEY:
     try:
+        from groq import Groq
         groq_client = Groq(api_key=GROQ_API_KEY)
-        print("Groq Loaded Successfully")
+        log.info("Groq Loaded Successfully")
     except Exception as e:
-        print("Groq Init Error:", e)
+        log.exception("Groq Init Error: %s", e)
 else:
-    print("GROQ_API_KEY missing or empty")
-# -------------------------------------------------------
-# 3) Flask app + LanguageTool URL
-# -------------------------------------------------------
+    log.warning("GROQ_API_KEY missing/empty: Groq features disabled")
+
+# -----------------------------
+# 4) FLASK APP
+# -----------------------------
 app = Flask(__name__)
-LT_API_URL = "https://api.languagetool.org/v2/check"
-# -------------------------------------------------------
-# 4) Load Black’s Law Dictionary JSON (local)
-# -------------------------------------------------------
+app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_BYTES
+CORS(app)
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["60 per minute"]
+)
+
+# -----------------------------
+# 5) CACHES
+# -----------------------------
+lt_cache   = TTLCache(maxsize=2000, ttl=60 * 30)   # 30 min
+groq_cache = TTLCache(maxsize=2000, ttl=60 * 60)   # 60 min
+
+http = requests.Session()
+
+# -----------------------------
+# 6) BLACKLAW LOAD
+# -----------------------------
 try:
     with open("blacklaw_terms.json", "r", encoding="utf-8") as f:
         BLACKLAW = json.load(f)
 except Exception:
     BLACKLAW = {}
+    log.warning("blacklaw_terms.json not found/invalid. Meanings disabled.")
+
 def normalize_key(word: str) -> str:
-    """Normalize keys for Black's Law lookup."""
     return re.sub(r"[^a-z\s]", "", word.lower().strip())
-# -------------------------------------------------------
-# 5) Legal fix rules (wrong → correct)
-# -------------------------------------------------------
+
+# -----------------------------
+# 7) LEGAL FIXES
+# -----------------------------
 LEGAL_FIX = {
     "suo moto": "suo motu",
     "prima facia": "prima facie",
     "mens reaa": "mens rea",
     "ratio decedendi": "ratio decidendi",
+    "audi alteram partum": "audi alteram partem",
 }
-# Common helper words we never want Groq to touch
-IGNORE_WORDS = {
-    "was", "the", "is", "and", "to", "in", "for",
-    "of", "at", "by", "on", "with"
-}
+
+IGNORE_WORDS = set()
+
 def is_reference_like(line: str) -> bool:
-    """Lines that look like references / links -> skip grammar checks."""
     s = line.strip()
     return (
         not s
@@ -64,177 +108,275 @@ def is_reference_like(line: str) -> bool:
         or re.match(r"^\[\d+\]$", s)
         or re.match(r"^\(.+\d{4}.*\)$", s)
     )
-# -------------------------------------------------------
-# 6) LanguageTool call (basic grammar)
-# -------------------------------------------------------
-def lt_check_sentence(sentence: str) -> dict:
+
+# -----------------------------
+# 8) AUTH (optional)
+# -----------------------------
+def require_api_key():
+    if not APP_API_KEY:
+        return
+    provided = (request.headers.get("X-API-Key", "") or "").strip()
+    if not provided:
+        provided = (request.form.get("api_key", "") or "").strip()
+    if not provided or provided != APP_API_KEY:
+        abort(401, description="Unauthorized: missing/invalid API key")
+
+# -----------------------------
+# 9) LANGUAGE TOOL
+# -----------------------------
+def lt_check_sentence(sentence: str) -> Dict[str, Any]:
+    sentence = sentence.strip()
+    if not sentence:
+        return {"matches": []}
+    if sentence in lt_cache:
+        return lt_cache[sentence]
     try:
         data = {"text": sentence, "language": "en-US"}
-        r = requests.post(LT_API_URL, data=data, timeout=8)
-        return r.json()
-    except Exception:
-        return {"matches": []}
-# -------------------------------------------------------
-# 7) Groq check → 100% SAFE FROM JSON ERROR (NEW)
-# -------------------------------------------------------
-def groq_check(sentence: str, lt_wrong_words: list) -> list:
-    if (not groq_client) or (not lt_wrong_words):
-        return []
-    lt_wrong_words = [w for w in lt_wrong_words if w.lower() not in IGNORE_WORDS]
-    if not lt_wrong_words:
-        return []
-    prompt = f"""Only correct these words: {lt_wrong_words}
-Black's Law fixes (apply if present):
-- suo moto → suo motu
-- prima facia → prima facie
-- mens reaa → mens rea
-- ratio decedendi → ratio decidendi
-Output ONLY this exact format. No extra text, no explanation:
-[{{"wrong": "old word", "suggestion": "new word"}}]
-Sentence: \"{sentence}\" """
-    try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            max_tokens=300
-        )
-        raw = response.choices[0].message.content.strip()
-        # Sabse powerful JSON extractor (kabhi fail nahi hoga)
-        import re
-        match = re.search(r"\[(?:.|\n)*\]", raw)
-        if not match:
-            return []
-        json_str = match.group(0)
-        # Trailing comma fix
-        json_str = re.sub(r",\s*]", "]", json_str)
-        import json
-        return json.loads(json_str)
+        r = http.post(LT_API_URL, data=data, timeout=10)
+        r.raise_for_status()
+        out = r.json()
     except Exception as e:
-        print("GROQ FINAL ERROR:", e)
-        return []
-# -------------------------------------------------------
-# 8) Detect legal phrases using manual list
-# -------------------------------------------------------
-def detect_legal(sentence: str):
+        log.warning("LT error: %s", e)
+        out = {"matches": []}
+    lt_cache[sentence] = out
+    return out
+
+# -----------------------------
+# 10) DETECT LEGAL
+# -----------------------------
+def detect_legal(sentence: str) -> List[Tuple[str, str, str]]:
     results = []
     for wrong, correct in LEGAL_FIX.items():
         if re.search(rf"\b{re.escape(wrong)}\b", sentence, re.IGNORECASE):
             meaning = BLACKLAW.get(normalize_key(correct), "")
             results.append((wrong, correct, meaning))
     return results
-# -------------------------------------------------------
-# 9) Build highlighted HTML line by line → FIXED VERSION
-# -------------------------------------------------------
-def process_text_line_by_line(text: str) -> str:
+
+# -----------------------------
+# 11) GROQ CHECKS
+# -----------------------------
+def groq_word_check(sentence: str, lt_wrong_words: List[str]) -> List[Dict[str, str]]:
+    if (not groq_client) or (not lt_wrong_words):
+        return []
+    lt_wrong_words = list(dict.fromkeys([w.strip() for w in lt_wrong_words if w.strip()]))
+    if not lt_wrong_words:
+        return []
+    cache_key = "WORD||" + sentence + "||" + "|".join(sorted([w.lower() for w in lt_wrong_words]))
+    if cache_key in groq_cache:
+        return groq_cache[cache_key]
+    prompt = f"""
+Only correct these words (do NOT rewrite the whole sentence): {lt_wrong_words}
+Apply legal fixes if present.
+Output ONLY valid JSON array like:
+[{{"wrong":"old","suggestion":"new"}}]
+Sentence: "{sentence}"
+""".strip()
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=350
+        )
+        raw = response.choices[0].message.content.strip()
+        m = re.search(r"\[(?:.|\n)*\]", raw)
+        if not m:
+            groq_cache[cache_key] = []
+            return []
+        json_str = re.sub(r",\s*]", "]", m.group(0))
+        arr = json.loads(json_str)
+        if not isinstance(arr, list):
+            arr = []
+        cleaned = []
+        for item in arr:
+            w = str(item.get("wrong", "")).strip()
+            s = str(item.get("suggestion", "")).strip()
+            if w and s and w.lower() != s.lower():
+                cleaned.append({"wrong": w, "suggestion": s})
+        groq_cache[cache_key] = cleaned
+        return cleaned
+    except Exception as e:
+        log.warning("Groq word-check error: %s", e)
+        return []
+
+def groq_rewrite_sentence(sentence: str) -> str:
+    if not groq_client:
+        return sentence
+    s = sentence.strip()
+    if not s:
+        return s
+    cache_key = "REWRITE||" + s
+    if cache_key in groq_cache:
+        return groq_cache[cache_key]
+    prompt = f"""
+Rewrite this sentence in correct English.
+Fix grammar, spelling, punctuation, subject-verb agreement.
+Keep meaning same.
+Sentence: {s}
+""".strip()
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=220
+        )
+        out = (response.choices[0].message.content or "").strip()
+        if not out:
+            out = s
+        groq_cache[cache_key] = out
+        return out
+    except Exception as e:
+        log.warning("Groq rewrite error: %s", e)
+        return s
+
+# -----------------------------
+# 12) BUILD HIGHLIGHTED HTML
+# -----------------------------
+def process_text_line_by_line(text: str, mode: str = "word") -> str:
     lines = text.split("\n")
     final_html = []
+
     for line in lines:
         if not line.strip():
             final_html.append("<p></p>")
             continue
+
+        safe_line = escape(line)
+
         if is_reference_like(line):
-            final_html.append(f"<p>{line}</p>")
+            final_html.append(f"<p>{safe_line}</p>")
             continue
+
         working = line
-        html_line = line
-        # LanguageTool
+
+        if mode == "rewrite":
+            corrected = groq_rewrite_sentence(working)
+            final_html.append(f"<p>{escape(corrected)}</p>")
+            continue
+
+        html_line = str(safe_line)
         lt_res = lt_check_sentence(working)
+
         lt_wrong_words = []
         for m in lt_res.get("matches", []):
             wrong = working[m["offset"]:m["offset"] + m["length"]]
-            if wrong.strip() and wrong.lower() not in IGNORE_WORDS:
+            if wrong.strip():
                 lt_wrong_words.append(wrong)
+
         legal_hits = detect_legal(working)
-        groq_hits = groq_check(working, lt_wrong_words)
-        # Combined dictionary: lower_case → data
+        groq_hits  = groq_word_check(working, lt_wrong_words)
+
         combined = {}
-        # Add Black's Law hits (lower case key)
+
         for wrong, correct, meaning in legal_hits:
             key = wrong.lower()
-            combined[key] = {
-                "original": wrong, # original casing
-                "black": correct,
-                "groq": None,
-                "meaning": meaning
-            }
-        # Add Groq hits (match by lower case)
+            combined[key] = {"original": wrong, "black": correct, "groq": None, "meaning": meaning}
+
         for g in groq_hits:
             wrong_raw = (g.get("wrong") or "").strip()
             suggestion = (g.get("suggestion") or "").strip()
             if not wrong_raw or not suggestion:
                 continue
+
             key = wrong_raw.lower()
             if key not in combined:
-                # Find original word in line
-                match = re.search(rf"\b{re.escape(wrong_raw)}\b", working, re.IGNORECASE)
-                original = match.group(0) if match else wrong_raw
-                combined[key] = {
-                    "original": original,
-                    "black": None,
-                    "groq": None,
-                    "meaning": ""
-                }
+                mm = re.search(rf"\b{re.escape(wrong_raw)}\b", working, re.IGNORECASE)
+                original = mm.group(0) if mm else wrong_raw
+                combined[key] = {"original": original, "black": None, "groq": None, "meaning": ""}
+
             combined[key]["groq"] = suggestion
-        # Now replace in html_line with correct original casing
-        for key, data in combined.items():
+
+        for _, data in combined.items():
             original_word = data["original"]
             black = data["black"] or ""
-            groq = data["groq"] or ""
+            groq  = data["groq"] or ""
             meaning = data["meaning"] or ""
+
+            ow = escape(original_word)
             span = (
                 f"<span class='grammar-wrong' "
-                f"data-wrong='{original_word}' "
-                f"data-black='{black}' "
-                f"data-groq='{groq}' "
-                f"data-meaning='{meaning}'>"
-                f"{original_word}</span>"
+                f"data-wrong='{escape(original_word)}' "
+                f"data-black='{escape(black)}' "
+                f"data-groq='{escape(groq)}' "
+                f"data-meaning='{escape(meaning)}'>"
+                f"{ow}</span>"
             )
-            # YEHI LINE CHANGE KI HAI (sabse safe method)
-            html_line = html_line.replace(original_word, span, 1)
+            html_line = html_line.replace(str(ow), span, 1)
 
         final_html.append(f"<p>{html_line}</p>")
+
     return "\n".join(final_html)
-# -------------------------------------------------------
-# 10) Routes
-# -------------------------------------------------------
-@app.route("/", methods=["GET", "POST"])
+
+# -----------------------------
+# 13) ROUTES
+# -----------------------------
+@app.route("/", methods=["GET"])
+@limiter.limit("20 per minute")
 def index():
-    if request.method == "POST":
-        text_input = request.form.get("text", "").strip()
-        file = request.files.get("file")
-        if file and file.filename.endswith(".docx"):
-            doc = Document(file)
-            text = "\n".join([p.text for p in doc.paragraphs])
-        else:
-            text = text_input
-        output = process_text_line_by_line(text)
-        return render_template("result.html", highlighted_html=output)
+    # Always render index.html for sidebar UI
     return render_template("index.html")
+
+
+@app.route("/check_grammar", methods=["POST"])
+@limiter.limit("30 per minute")
+def check_grammar():
+    data = request.get_json(force=True) or {}
+    text = (data.get("text", "") or "").strip()
+    mode = (data.get("mode", "word") or "word").strip().lower()
+
+    if len(text) > MAX_TEXT_CHARS:
+        abort(413, description=f"Text too long. Max {MAX_TEXT_CHARS} chars allowed.")
+
+    # Example grammar processing function
+    output = process_text_line_by_line(text, mode=mode)
+
+    # Ensure suggestions are returned as array of {old,new}
+    return jsonify({"suggestions": output})
+
+
 @app.route("/download_corrected", methods=["POST"])
+@limiter.limit("10 per minute")
 def download_corrected():
-    final_text = request.form.get("final_text", "")
-    replacements = json.loads(request.form.get("replacements", "[]"))
+    final_text = (request.form.get("final_text", "") or "")
+    if len(final_text) > MAX_TEXT_CHARS:
+        abort(413, description=f"Text too long. Max {MAX_TEXT_CHARS} chars allowed.")
+
+    try:
+        replacements = json.loads(request.form.get("replacements", "[]"))
+        if not isinstance(replacements, list):
+            replacements = []
+    except Exception:
+        replacements = []
+
     doc = Document()
     for line in final_text.split("\n"):
         doc.add_paragraph(line)
+
     for para in doc.paragraphs:
         for rep in replacements:
-            wrong = rep["old"]
-            correct = rep["new"]
-            para.text = re.sub(
-                rf"\b{re.escape(wrong)}\b",
-                correct,
-                para.text,
-                flags=re.IGNORECASE
-            )
-    output_path = "static/Corrected_Final_Output.docx"
-    doc.save(output_path)
-    return send_file(output_path, as_attachment=True)
-# -------------------------------------------------------
-# 11) Run app → Render ke liye yeh zaroori hai
-# -------------------------------------------------------
+            wrong = str(rep.get("old", "")).strip()
+            correct = str(rep.get("new", "")).strip()
+            if not wrong or not correct:
+                continue
+            para.text = re.sub(rf"\b{re.escape(wrong)}\b", correct, para.text, flags=re.IGNORECASE)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+    tmp_path = tmp.name
+    tmp.close()
+    doc.save(tmp_path)
+    return send_file(tmp_path, as_attachment=True, download_name="Corrected_Final_Output.docx")
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return {"status": "ok"}
+
+
+# -----------------------------
+# 14) RUN APP
+# -----------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port, debug=False)
 
