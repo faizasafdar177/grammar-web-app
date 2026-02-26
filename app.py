@@ -15,6 +15,7 @@ from flask_limiter.util import get_remote_address
 # Caching
 from cachetools import TTLCache
 
+
 # -----------------------------
 # 1) ENV
 # -----------------------------
@@ -58,13 +59,6 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_BYTES
 CORS(app)
 
-# ✅ FIX: Allow this app to be embedded in an iframe inside Word Add-in
-@app.after_request
-def allow_iframe_embedding(response):
-    response.headers["X-Frame-Options"] = "ALLOWALL"
-    response.headers["Content-Security-Policy"] = "frame-ancestors *"
-    return response
-
 limiter = Limiter(
     get_remote_address,
     app=app,
@@ -76,6 +70,7 @@ limiter = Limiter(
 # -----------------------------
 lt_cache   = TTLCache(maxsize=2000, ttl=60 * 30)   # 30 min
 groq_cache = TTLCache(maxsize=2000, ttl=60 * 60)   # 60 min
+gen_cache  = TTLCache(maxsize=200, ttl=60 * 30)
 
 http = requests.Session()
 
@@ -103,6 +98,7 @@ LEGAL_FIX = {
     "audi alteram partum": "audi alteram partem",
 }
 
+# ✅ CHANGE: Do NOT ignore any words (tenses words included)
 IGNORE_WORDS = set()
 
 def is_reference_like(line: str) -> bool:
@@ -117,9 +113,15 @@ def is_reference_like(line: str) -> bool:
     )
 
 # -----------------------------
-# 8) AUTH (optional)
+# 8) SIMPLE AUTH (optional)
 # -----------------------------
 def require_api_key():
+    """
+    Optional auth:
+    - Header: X-API-Key
+    - OR form field: api_key
+    If APP_API_KEY is empty => auth disabled.
+    """
     if not APP_API_KEY:
         return
     provided = (request.headers.get("X-API-Key", "") or "").strip()
@@ -129,14 +131,16 @@ def require_api_key():
         abort(401, description="Unauthorized: missing/invalid API key")
 
 # -----------------------------
-# 9) LANGUAGE TOOL
+# 9) LANGUAGETOOL
 # -----------------------------
 def lt_check_sentence(sentence: str) -> Dict[str, Any]:
     sentence = sentence.strip()
     if not sentence:
         return {"matches": []}
+
     if sentence in lt_cache:
         return lt_cache[sentence]
+
     try:
         data = {"text": sentence, "language": "en-US"}
         r = http.post(LT_API_URL, data=data, timeout=10)
@@ -145,11 +149,12 @@ def lt_check_sentence(sentence: str) -> Dict[str, Any]:
     except Exception as e:
         log.warning("LT error: %s", e)
         out = {"matches": []}
+
     lt_cache[sentence] = out
     return out
 
 # -----------------------------
-# 10) DETECT LEGAL
+# 10) LEGAL DETECTOR
 # -----------------------------
 def detect_legal(sentence: str) -> List[Tuple[str, str, str]]:
     results = []
@@ -160,24 +165,37 @@ def detect_legal(sentence: str) -> List[Tuple[str, str, str]]:
     return results
 
 # -----------------------------
-# 11) GROQ CHECKS
+# 11) GROQ WORD-ONLY CHECK (safe JSON)
 # -----------------------------
 def groq_word_check(sentence: str, lt_wrong_words: List[str]) -> List[Dict[str, str]]:
     if (not groq_client) or (not lt_wrong_words):
         return []
+
+    # ✅ CHANGE: No ignore filtering; only de-duplicate
     lt_wrong_words = list(dict.fromkeys([w.strip() for w in lt_wrong_words if w.strip()]))
     if not lt_wrong_words:
         return []
+
     cache_key = "WORD||" + sentence + "||" + "|".join(sorted([w.lower() for w in lt_wrong_words]))
     if cache_key in groq_cache:
         return groq_cache[cache_key]
+
     prompt = f"""
 Only correct these words (do NOT rewrite the whole sentence): {lt_wrong_words}
-Apply legal fixes if present.
-Output ONLY valid JSON array like:
+
+Apply these exact legal fixes if present:
+- suo moto → suo motu
+- prima facia → prima facie
+- mens reaa → mens rea
+- ratio decedendi → ratio decidendi
+- audi alteram partum → audi alteram partem
+
+Output ONLY valid JSON array exactly like:
 [{{"wrong":"old","suggestion":"new"}}]
+
 Sentence: "{sentence}"
 """.strip()
+
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -186,41 +204,68 @@ Sentence: "{sentence}"
             max_tokens=350
         )
         raw = response.choices[0].message.content.strip()
+
         m = re.search(r"\[(?:.|\n)*\]", raw)
         if not m:
             groq_cache[cache_key] = []
             return []
+
         json_str = re.sub(r",\s*]", "]", m.group(0))
         arr = json.loads(json_str)
         if not isinstance(arr, list):
             arr = []
+
         cleaned = []
         for item in arr:
             w = str(item.get("wrong", "")).strip()
             s = str(item.get("suggestion", "")).strip()
-            if w and s and w.lower() != s.lower():
+            if w and s and w.lower() !=s.lower():
                 cleaned.append({"wrong": w, "suggestion": s})
+
         groq_cache[cache_key] = cleaned
         return cleaned
+
     except Exception as e:
         log.warning("Groq word-check error: %s", e)
         return []
 
+# -----------------------------
+# 12) GROQ FULL REWRITE (tenses+punc+grammar+spelling)
+# -----------------------------
 def groq_rewrite_sentence(sentence: str) -> str:
+    """
+    Full rewrite => tenses, punctuation, grammar, spelling correction.
+    Keep meaning same.
+    """
     if not groq_client:
         return sentence
+
     s = sentence.strip()
     if not s:
         return s
+
     cache_key = "REWRITE||" + s
     if cache_key in groq_cache:
         return groq_cache[cache_key]
+
     prompt = f"""
-Rewrite this sentence in correct English.
-Fix grammar, spelling, punctuation, subject-verb agreement.
-Keep meaning same.
+Rewrite this sentence in correct, clear English.
+Fix: tenses, punctuation, grammar, spelling, subject-verb agreement.
+Keep the meaning the same (do not add new facts).
+Keep it as ONE sentence (do not split into multiple sentences).
+
+Also fix these legal phrases if they appear:
+- suo moto → suo motu
+- prima facia → prima facie
+- mens reaa → mens rea
+- ratio decedendi → ratio decidendi
+- audi alteram partum → audi alteram partem
+
+Output ONLY the corrected sentence. No quotes. No extra text.
+
 Sentence: {s}
 """.strip()
+
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -238,9 +283,74 @@ Sentence: {s}
         return s
 
 # -----------------------------
-# 12) BUILD HIGHLIGHTED HTML
+# 13) GENERATE LONG PARAGRAPH WITH MISTAKES
+# -----------------------------
+def generate_mistake_paragraph(topic: str = "court case") -> str:
+    """
+    Generates a long paragraph intentionally filled with mistakes:
+    tenses, punctuation, grammar, spelling, etc.
+    """
+    topic = (topic or "court case").strip()
+    cache_key = topic.lower()
+    if cache_key in gen_cache:
+        return gen_cache[cache_key]
+
+    # fallback (if Groq missing)
+    if not groq_client:
+        text = (
+            "The judge take suo motu action without properly hearing the defendant and he dont give fair "
+            "oppurtunity for defence, which are against natural justice. The court say prima facie evidences "
+            "was enough but ratio decidendi were not clear, and mens rea is not establish, however it ignore. "
+            "Witnesses statement was contradictory, some witness change there version in cross examination and "
+            "others contradict each other, but judgement didnt considered it properly, so it seems court rely on "
+            "assumptions then law, and burdens of proofs shifted on accused which is not correct, moreover "
+            "procedural irregularities was overlooked and precedent case laws were not analyse, making decision "
+            "arbitrary capricious and not sustainable in eyes of law."
+        )
+        gen_cache[cache_key] = text
+        return text
+
+    prompt = f"""
+Write ONE long paragraph (minimum 180-220 words) about: "{topic}".
+
+IMPORTANT: Make it intentionally incorrect English with MANY mistakes:
+- tense mistakes
+- punctuation mistakes
+- grammar mistakes
+- spelling mistakes
+- subject-verb agreement mistakes
+- wrong plural/singular usage
+- awkward legal phrasing
+
+It should still be understandable.
+Output ONLY the paragraph.
+""".strip()
+
+    try:
+        r = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=450
+        )
+        out = (r.choices[0].message.content or "").strip()
+        if not out:
+            out = "The court take action but the reasoning are not clear and it make many errors."
+        gen_cache[cache_key] = out
+        return out
+    except Exception as e:
+        log.warning("Generate paragraph error: %s", e)
+        return "The court take action but the reasoning are not clear and it make many errors."
+
+# -----------------------------
+# 14) BUILD HIGHLIGHTED HTML
 # -----------------------------
 def process_text_line_by_line(text: str, mode: str = "word") -> str:
+    """
+    mode:
+      - 'word'   => highlight + suggestions
+      - 'rewrite'=> full corrected lines returned (no highlights)
+    """
     lines = text.split("\n")
     final_html = []
 
@@ -249,6 +359,7 @@ def process_text_line_by_line(text: str, mode: str = "word") -> str:
             final_html.append("<p></p>")
             continue
 
+        # XSS safe display
         safe_line = escape(line)
 
         if is_reference_like(line):
@@ -257,18 +368,21 @@ def process_text_line_by_line(text: str, mode: str = "word") -> str:
 
         working = line
 
+        # FULL REWRITE MODE (tenses + punctuation + grammar + spelling)
         if mode == "rewrite":
             corrected = groq_rewrite_sentence(working)
             final_html.append(f"<p>{escape(corrected)}</p>")
             continue
 
+        # WORD MODE (highlight suggestions)
         html_line = str(safe_line)
         lt_res = lt_check_sentence(working)
 
         lt_wrong_words = []
         for m in lt_res.get("matches", []):
             wrong = working[m["offset"]:m["offset"] + m["length"]]
-            if wrong.strip():
+            # ✅ CHANGE: no ignore; keep tense words too
+            if wrong.strip() and len(wrong.strip()) > 0:
                 lt_wrong_words.append(wrong)
 
         legal_hits = detect_legal(working)
@@ -309,6 +423,8 @@ def process_text_line_by_line(text: str, mode: str = "word") -> str:
                 f"data-meaning='{escape(meaning)}'>"
                 f"{ow}</span>"
             )
+
+            # ✅ CHANGE: stable replace (no regex boundary issues)
             html_line = html_line.replace(str(ow), span, 1)
 
         final_html.append(f"<p>{html_line}</p>")
@@ -316,36 +432,63 @@ def process_text_line_by_line(text: str, mode: str = "word") -> str:
     return "\n".join(final_html)
 
 # -----------------------------
-# 13) ROUTES
+# 15) ROUTES
 # -----------------------------
-@app.route("/", methods=["GET"])
+@app.route("/", methods=["GET", "POST"])
 @limiter.limit("20 per minute")
 def index():
+    if request.method == "POST":
+        require_api_key()
+
+        text_input = (request.form.get("text", "") or "").strip()
+        mode = (request.form.get("mode", "word") or "word").strip().lower()
+        file = request.files.get("file")
+
+        text = text_input
+        if file and file.filename.lower().endswith(".docx"):
+            doc = Document(file)
+            text = "\n".join([p.text for p in doc.paragraphs])
+
+        if len(text) > MAX_TEXT_CHARS:
+            abort(413, description=f"Text too long. Max {MAX_TEXT_CHARS} chars allowed.")
+
+        output = process_text_line_by_line(text, mode=mode)
+        return render_template("result.html", highlighted_html=output, mode=mode)
+
     return render_template("index.html")
 
-
-@app.route("/check_grammar", methods=["POST"])
+@app.route("/check", methods=["POST"])
 @limiter.limit("30 per minute")
-def check_grammar():
-    data = request.get_json(force=True) or {}
-    text = (data.get("text", "") or "").strip()
-    mode = (data.get("mode", "word") or "word").strip().lower()
+def check_text():
+    require_api_key()
+    text = (request.form.get("text", "") or "")
+    mode = (request.form.get("mode", "word") or "word").strip().lower()
 
     if len(text) > MAX_TEXT_CHARS:
         abort(413, description=f"Text too long. Max {MAX_TEXT_CHARS} chars allowed.")
 
     output = process_text_line_by_line(text, mode=mode)
+    return Response(output, mimetype="text/html")
 
-    return jsonify({"suggestions": output})
-
+@app.route("/generate_sample", methods=["POST"])
+@limiter.limit("15 per minute")
+def generate_sample():
+    require_api_key()
+    topic = (request.form.get("topic", "") or "court case").strip()
+    para = generate_mistake_paragraph(topic)
+    return jsonify({"text": para})
 
 @app.route("/download_corrected", methods=["POST"])
 @limiter.limit("10 per minute")
 def download_corrected():
+    require_api_key()
+
     final_text = (request.form.get("final_text", "") or "")
     if len(final_text) > MAX_TEXT_CHARS:
         abort(413, description=f"Text too long. Max {MAX_TEXT_CHARS} chars allowed.")
 
+    # In rewrite mode, final_text is already corrected plain text.
+    # In word mode, we still allow replacements.
     try:
         replacements = json.loads(request.form.get("replacements", "[]"))
         if not isinstance(replacements, list):
@@ -368,22 +511,15 @@ def download_corrected():
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
     tmp_path = tmp.name
     tmp.close()
+
     doc.save(tmp_path)
     return send_file(tmp_path, as_attachment=True, download_name="Corrected_Final_Output.docx")
-
 
 @app.route("/health", methods=["GET"])
 def health():
     return {"status": "ok"}
 
-@app.route("/taskpane.html")
-def taskpane():
-    return render_template("taskpane.html")
-
-
-# -----------------------------
-# 14) RUN APP
-# -----------------------------
+# DEV ONLY
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=False)
