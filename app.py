@@ -461,8 +461,14 @@ def index():
 @limiter.limit("30 per minute")
 def check_text():
     require_api_key()
-    text = (request.form.get("text", "") or "")
-    mode = (request.form.get("mode", "word") or "word").strip().lower()
+
+    if request.is_json:
+        data = request.get_json()
+        text = (data.get("text", "") or "")
+        mode = (data.get("mode", "word") or "word").strip().lower()
+    else:
+        text = (request.form.get("text", "") or "")
+        mode = (request.form.get("mode", "word") or "word").strip().lower()
 
     if len(text) > MAX_TEXT_CHARS:
         abort(413, description=f"Text too long. Max {MAX_TEXT_CHARS} chars allowed.")
@@ -470,13 +476,6 @@ def check_text():
     output = process_text_line_by_line(text, mode=mode)
     return Response(output, mimetype="text/html")
 
-@app.route("/generate_sample", methods=["POST"])
-@limiter.limit("15 per minute")
-def generate_sample():
-    require_api_key()
-    topic = (request.form.get("topic", "") or "court case").strip()
-    para = generate_mistake_paragraph(topic)
-    return jsonify({"text": para})
 
 @app.route("/download_corrected", methods=["POST"])
 @limiter.limit("10 per minute")
@@ -518,6 +517,13 @@ def download_corrected():
 @app.route("/health", methods=["GET"])
 def health():
     return {"status": "ok"}
+@app.route("/refresh", methods=["POST"])
+def refresh():
+    require_api_key()
+    # For now, just echo back text sent from Office.js
+    text = (request.json.get("text", "") if request.is_json else "")
+    return jsonify({"text": text})
+
 
 # DEV ONLY
 if __name__ == "__main__":
