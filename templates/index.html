@@ -8,6 +8,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 
+  <!-- Office.js for Word integration -->
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+
   <style>
     body {
       font-family: 'Poppins', sans-serif;
@@ -81,7 +84,13 @@
         </select>
       </div>
 
+      <!-- Text area with ID for JS -->
       <textarea id="textBox" name="text" rows="6" placeholder="Type or paste your text here..."></textarea>
+
+      <!-- Refresh button to pull Word text -->
+      <button type="button" class="btn btn-secondary" onclick="refreshText()">
+        🔄 Refresh from Word
+      </button>
 
       <button type="button" class="btn btn-secondary" onclick="generateMistakeParagraph()">
         Generate Long Paragraph with Mistakes
@@ -107,7 +116,18 @@ async function generateMistakeParagraph(){
   const data = await res.json();
   document.getElementById("textBox").value = data.text || "";
 }
+
+// NEW: Refresh function to pull Word text
+function refreshText() {
+  Word.run(async (context) => {
+    const body = context.document.body;
+    body.load("text");
+    await context.sync();
+
+    // Put Word document text into sidebar textarea
+    document.getElementById("textBox").value = body.text;
+  });
+}
 </script>
 </body>
 </html>
-
