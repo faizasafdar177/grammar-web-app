@@ -11,36 +11,54 @@
       border:1px solid #ddd; padding:10px; border-radius:8px; line-height:1.5;
       font-size:14px; max-height:360px; overflow-y:auto;
     }
-    .grammar-wrong { border-bottom:2px solid purple; font-weight:bold; cursor:pointer; padding:1px 2px; }
+    .grammar-wrong {
+      border-bottom:2px solid purple; font-weight:bold;
+      cursor:pointer; padding:1px 2px;
+    }
     .grammar-wrong:hover { background:#f0e6ff; }
     .popup-box {
       position: fixed;
-      left: 50%;
-      top: 20%;
+      left: 50%; top: 20%;
       transform: translateX(-50%);
       background: white;
       padding: 10px;
       border-radius: 8px;
       box-shadow: 0 2px 12px rgba(0,0,0,0.25);
-      width: 320px;
-      max-width: 92%;
+      width: 320px; max-width: 92%;
       z-index: 9999;
       display: none;
       font-size: 13px;
     }
-    .meaning { font-style: italic; color:#666; margin:6px 0; padding:6px; background:#f8f9fa; border-radius:6px; }
+    .meaning { font-style:italic; color:#666; margin:6px 0; padding:6px; background:#f8f9fa; border-radius:6px; }
     button { margin-top:6px; width:100%; font-size:13px; padding:8px; border-radius:6px; border:none; cursor:pointer; }
-    .btn { background:#4e54c8; color:white; }
+    .btn  { background:#4e54c8; color:white; }
     .btn2 { background:#6c757d; color:white; }
     .row { display:flex; gap:8px; }
     .row button { width:50%; }
-    .topbar { display:flex; gap:10px; margin:10px 0; }
+    .topbar { display:flex; gap:10px; margin:10px 0; align-items:center; }
     .topbar a { text-decoration:none; font-weight:600; }
+
+    /* Word sync status bar */
+    #wordStatus {
+      display: none;
+      font-size: 11px;
+      padding: 5px 10px;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      font-weight: 600;
+      text-align: center;
+    }
+    #wordStatus.ok    { background:#d4edda; color:#155724; display:block; }
+    #wordStatus.error { background:#f8d7da; color:#721c24; display:block; }
+    #wordStatus.info  { background:#d1ecf1; color:#0c5460; display:block; }
   </style>
 </head>
 <body>
 
   <h1>✨ Grammar Check Result</h1>
+
+  <!-- Word sync status (shown when running in taskpane) -->
+  <div id="wordStatus"></div>
 
   <div class="topbar">
     <a href="/">← Back</a>
@@ -53,41 +71,80 @@
 
   <div id="textContainer" class="text-area">{{ highlighted_html|safe }}</div>
 
-  <!-- Popup (only needed in word mode; harmless in rewrite mode) -->
+  <!-- Suggestion Popup -->
   <div id="popup" class="popup-box">
     <p><b>Wrong Word:</b> <span id="popupWrong" style="color:red; font-weight:bold;"></span></p>
     <div id="meaningDiv" class="meaning" style="display:none;"></div>
-    <div id="blackDiv" style="display:none;"><p><b>Black's Law:</b> <span id="popupBlack" style="color:green; font-weight:bold;"></span></p></div>
-    <div id="groqDiv" style="display:none;"><p><b>Groq/AI:</b> <span id="popupGroq" style="color:#0066cc; font-weight:bold;"></span></p></div>
-
+    <div id="blackDiv" style="display:none;">
+      <p><b>Black's Law:</b> <span id="popupBlack" style="color:green; font-weight:bold;"></span></p>
+    </div>
+    <div id="groqDiv" style="display:none;">
+      <p><b>Groq/AI:</b> <span id="popupGroq" style="color:#0066cc; font-weight:bold;"></span></p>
+    </div>
     <div class="row">
       <button id="useBlackBtn" class="btn" onclick="applyBlack()">Use Black</button>
-      <button id="useGroqBtn" class="btn" onclick="applyGroq()">Use Groq</button>
+      <button id="useGroqBtn"  class="btn" onclick="applyGroq()">Use Groq</button>
     </div>
     <button class="btn2" onclick="ignoreFix()">Ignore</button>
     <button class="btn2" onclick="closePopup()">Cancel</button>
   </div>
 
 <script>
-let selectedElement = null;
-let selectedWrong = "";
-let blackSuggestion = "";
-let groqSuggestion = "";
-let meaningText = "";
-let replacements = [];
+let selectedElement  = null;
+let selectedWrong    = "";
+let blackSuggestion  = "";
+let groqSuggestion   = "";
+let meaningText      = "";
+let replacements     = [];
+let isInsideWord     = false;   // true when running inside Word taskpane
 
+// ─────────────────────────────────────────────────────────────────
+// postMessage bridge — listen for messages from taskpane.html
+// ─────────────────────────────────────────────────────────────────
+window.addEventListener('message', function(event) {
+
+  if (event.data && event.data.type === 'OFFICE_READY') {
+    isInsideWord = true;
+    showWordStatus('✅ Connected to Word — accepted fixes will update document', 'ok');
+  }
+
+  // taskpane.html confirmed a replacement succeeded
+  if (event.data && event.data.type === 'REPLACE_SUCCESS') {
+    const { original, corrected } = event.data;
+    showWordStatus(`✅ Applied "${original}" → "${corrected}" in Word document`, 'ok');
+  }
+
+  // taskpane.html could not find the word in the document
+  if (event.data && event.data.type === 'REPLACE_NOT_FOUND') {
+    showWordStatus(`⚠️ "${event.data.original}" not found in document`, 'error');
+  }
+
+  if (event.data && event.data.type === 'ERROR') {
+    showWordStatus('❌ Word error: ' + event.data.message, 'error');
+  }
+});
+
+function showWordStatus(msg, type) {
+  const el = document.getElementById('wordStatus');
+  el.textContent = msg;
+  el.className = type;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Popup open on clicking a highlighted word
+// ─────────────────────────────────────────────────────────────────
 function closePopup() {
   document.getElementById('popup').style.display = "none";
 }
 
-document.addEventListener('click', function (e) {
+document.addEventListener('click', function(e) {
   if (!e.target.classList.contains('grammar-wrong')) return;
 
   selectedElement = e.target;
-  selectedWrong = selectedElement.dataset.wrong || "";
-  blackSuggestion = selectedElement.dataset.black || "";
-  groqSuggestion = selectedElement.dataset.groq || "";
-  meaningText = selectedElement.dataset.meaning || "";
+  selectedWrong   = selectedElement.dataset.wrong   || "";
+  blackSuggestion = selectedElement.dataset.black   || "";
+  groqSuggestion  = selectedElement.dataset.groq    || "";
+  meaningText     = selectedElement.dataset.meaning || "";
 
   if (!blackSuggestion && !groqSuggestion) return;
 
@@ -121,31 +178,47 @@ document.addEventListener('click', function (e) {
   document.getElementById("popup").style.display = "block";
 });
 
+// ─────────────────────────────────────────────────────────────────
+// Apply a fix: update the UI AND tell taskpane.html to update Word
+// ─────────────────────────────────────────────────────────────────
 function applyFix(finalSuggestion) {
   if (!selectedElement || !finalSuggestion) return;
 
+  // 1. Update the result page visually
   selectedElement.outerHTML =
-    `<span style="background:#d4edda; color:#155724; padding:2px 4px; border-radius:4px; font-weight:bold;">${finalSuggestion}</span>`;
+    `<span style="background:#d4edda;color:#155724;padding:2px 4px;border-radius:4px;font-weight:bold;">${finalSuggestion}</span>`;
 
-  replacements.push({old: selectedWrong, new: finalSuggestion});
+  // 2. Track for DOCX download
+  replacements.push({ old: selectedWrong, new: finalSuggestion });
   document.getElementById("replacementsField").value = JSON.stringify(replacements);
+
+  // 3. ✅ NEW: Tell taskpane.html to apply the fix in the live Word document
+  if (isInsideWord) {
+    showWordStatus(`⏳ Applying "${selectedWrong}" → "${finalSuggestion}" in Word...`, 'info');
+    window.parent.postMessage({
+      type      : 'REPLACE_TEXT',
+      original  : selectedWrong,
+      corrected : finalSuggestion
+    }, '*');
+  }
+
   closePopup();
 }
 
 function applyBlack() { if (blackSuggestion) applyFix(blackSuggestion); }
-function applyGroq()  { if (groqSuggestion)  applyFix(groqSuggestion); }
+function applyGroq()  { if (groqSuggestion)  applyFix(groqSuggestion);  }
 
 function ignoreFix() {
   if (!selectedElement) return;
-  selectedElement.outerHTML = `<span style="text-decoration: line-through; color:#888;">${selectedWrong}</span>`;
+  selectedElement.outerHTML =
+    `<span style="text-decoration:line-through;color:#888;">${selectedWrong}</span>`;
   closePopup();
 }
 
-// Build final_text for DOCX download (plain text of container)
-function buildFinalText(){
+// Build final_text for DOCX download
+function buildFinalText() {
   const container = document.getElementById("textContainer");
-  const txt = container.innerText || "";
-  document.getElementById("finalText").value = txt;
+  document.getElementById("finalText").value = container.innerText || "";
 }
 buildFinalText();
 </script>
