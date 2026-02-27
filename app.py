@@ -408,39 +408,24 @@ def process_text_line_by_line(text: str, mode: str = "word") -> str:
 
             combined[key]["groq"] = suggestion
 
-        # FIX: Work on RAW unescaped line so string.replace() finds exact words.
-        # Data attributes use double-quotes. Escape only plain text segments
-        # between spans AFTER all spans are inserted — not before.
-        raw_line = line
-
-        def esc_attr(s):
-            return (s.replace("&", "&amp;")
-                     .replace('"', "&quot;")
-                     .replace("<", "&lt;")
-                     .replace(">", "&gt;"))
-
         for _, data in combined.items():
             original_word = data["original"]
-            black   = data["black"]   or ""
-            groq_s  = data["groq"]    or ""
+            black = data["black"] or ""
+            groq  = data["groq"] or ""
             meaning = data["meaning"] or ""
 
+            ow = escape(original_word)
             span = (
-                f'<span class="grammar-wrong" '
-                f'data-wrong="{esc_attr(original_word)}" '
-                f'data-black="{esc_attr(black)}" '
-                f'data-groq="{esc_attr(groq_s)}" '
-                f'data-meaning="{esc_attr(meaning)}">'
-                f'{esc_attr(original_word)}</span>'
+                f"<span class='grammar-wrong' "
+                f"data-wrong='{escape(original_word)}' "
+                f"data-black='{escape(black)}' "
+                f"data-groq='{escape(groq)}' "
+                f"data-meaning='{escape(meaning)}'>"
+                f"{ow}</span>"
             )
-            raw_line = raw_line.replace(original_word, span, 1)
 
-        # Escape only the plain-text parts between spans (not the span HTML itself)
-        parts = re.split(r'(<span[^>]*>.*?</span>)', raw_line, flags=re.DOTALL)
-        html_line = "".join(
-            part if part.startswith('<span') else str(escape(part))
-            for part in parts
-        )
+            # ✅ CHANGE: stable replace (no regex boundary issues)
+            html_line = html_line.replace(str(ow), span, 1)
 
         final_html.append(f"<p>{html_line}</p>")
 
