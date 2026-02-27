@@ -375,7 +375,8 @@ def process_text_line_by_line(text: str, mode: str = "word") -> str:
             continue
 
         # WORD MODE (highlight suggestions)
-        html_line = str(safe_line)
+        # NOTE: Do NOT pre-escape here. We work on raw `line` and escape
+        # only the plain-text segments AFTER spans are inserted (below).
         lt_res = lt_check_sentence(working)
 
         lt_wrong_words = []
@@ -546,4 +547,3 @@ def generate_sample():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=False)
-
