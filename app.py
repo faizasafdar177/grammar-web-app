@@ -517,11 +517,13 @@ def download_corrected():
 @app.route("/health", methods=["GET"])
 def health():
     return {"status": "ok"}
-@app.route("/refresh", methods=["POST"])
-def refresh():
-    require_api_key()
-    # For now, just echo back text sent from Office.js
-    text = (request.json.get("text", "") if request.is_json else "")
+
+# /generate_sample — called by the "Generate Paragraph" button in the web UI
+@app.route("/generate_sample", methods=["POST"])
+@limiter.limit("10 per minute")
+def generate_sample():
+    topic = (request.form.get("topic", "") or "court case").strip()
+    text  = generate_mistake_paragraph(topic)
     return jsonify({"text": text})
 
 
