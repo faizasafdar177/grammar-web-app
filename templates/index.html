@@ -8,8 +8,11 @@
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 
-  <!-- Office.js for Word integration -->
-  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <!--
+    ❌ NO Office.js here — this page runs inside an iframe.
+    Office.js MUST only run in the top-level taskpane.html.
+    Word communication happens via postMessage bridge.
+  -->
 
   <style>
     body {
@@ -58,7 +61,7 @@
       font-size: 16px;
       width: 100%;
     }
-    .btn-secondary{
+    .btn-secondary {
       border-radius: 10px;
       padding: 10px 16px;
       width: 100%;
@@ -66,6 +69,16 @@
     }
     .or-divider { margin: 18px 0; font-weight: 600; color: #666; font-size: 13px; }
     footer { margin-top: 20px; font-size: 12px; color: #777; }
+    #officeStatus {
+      display: none;
+      font-size: 12px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+    #officeStatus.connected    { background: #d4edda; color: #155724; display: block; }
+    #officeStatus.disconnected { background: #fff3cd; color: #856404; display: block; }
   </style>
 </head>
 
@@ -73,6 +86,8 @@
   <div class="container">
     <h2>✨ AI Grammar Checker</h2>
     <p>Type text or upload <strong>.docx</strong>. Choose mode: highlight or full correction.</p>
+
+    <div id="officeStatus"></div>
 
     <form action="/" method="post" enctype="multipart/form-data" class="mt-3">
 
@@ -84,11 +99,9 @@
         </select>
       </div>
 
-      <!-- Text area with ID for JS -->
-      <textarea id="textBox" name="text" rows="6" placeholder="Type or paste your text here..."></textarea>
+      <textarea id="textBox" name="text" rows="6" placeholder="Type or paste your text here, or click 'Refresh from Word'..."></textarea>
 
-      <!-- Refresh button to pull Word text -->
-      <button type="button" class="btn btn-secondary" onclick="refreshText()">
+      <button type="button" class="btn btn-secondary" id="btnRefresh" onclick="refreshText()">
         🔄 Refresh from Word
       </button>
 
@@ -107,27 +120,59 @@
   </div>
 
 <script>
-async function generateMistakeParagraph(){
-  const topic = prompt("Topic? (e.g., court case, contract dispute, criminal trial)", "court case");
-  const form = new FormData();
-  form.append("topic", topic || "court case");
+  let isInsideWordTaskpane = false;
 
-  const res = await fetch("/generate_sample", { method: "POST", body: form });
-  const data = await res.json();
-  document.getElementById("textBox").value = data.text || "";
-}
+  // Listen for messages FROM taskpane.html (parent window)
+  window.addEventListener('message', function(event) {
 
-// NEW: Refresh function to pull Word text
-function refreshText() {
-  Word.run(async (context) => {
-    const body = context.document.body;
-    body.load("text");
-    await context.sync();
+    // Office is ready
+    if (event.data && event.data.type === 'OFFICE_READY') {
+      isInsideWordTaskpane = true;
+      const s = document.getElementById('officeStatus');
+      s.textContent = '✅ Connected to Microsoft Word';
+      s.className = 'connected';
+    }
 
-    // Put Word document text into sidebar textarea
-    document.getElementById("textBox").value = body.text;
+    // Got document text back from taskpane.html
+    if (event.data && event.data.type === 'DOCUMENT_TEXT') {
+      document.getElementById('textBox').value = event.data.text || '';
+      const btn = document.getElementById('btnRefresh');
+      btn.textContent = '✅ Loaded!';
+      btn.disabled = false;
+      setTimeout(() => { btn.textContent = '🔄 Refresh from Word'; }, 2000);
+    }
+
+    // Error from taskpane.html
+    if (event.data && event.data.type === 'ERROR') {
+      alert('Word Error: ' + event.data.message);
+      document.getElementById('btnRefresh').disabled = false;
+    }
   });
-}
+
+  // Ask parent taskpane.html to read Word document
+  function refreshText() {
+    if (!isInsideWordTaskpane) {
+      alert('Not running inside a Word taskpane.\nOpen this via the Word Add-in sidebar.');
+      return;
+    }
+    const btn = document.getElementById('btnRefresh');
+    btn.textContent = '⏳ Loading...';
+    btn.disabled = true;
+    window.parent.postMessage({ type: 'READ_DOCUMENT' }, '*');
+  }
+
+  async function generateMistakeParagraph() {
+    const topic = prompt("Topic? (e.g., court case, contract dispute)", "court case");
+    const form = new FormData();
+    form.append("topic", topic || "court case");
+    try {
+      const res = await fetch("/generate_sample", { method: "POST", body: form });
+      const data = await res.json();
+      document.getElementById("textBox").value = data.text || "";
+    } catch(e) {
+      alert("Could not generate paragraph: " + e.message);
+    }
+  }
 </script>
 </body>
 </html>
